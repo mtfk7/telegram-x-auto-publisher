@@ -42,20 +42,20 @@ const HELP_TEXT =
   '3. Kirim caption (max 280 karakter)\n' +
   '4. Konfirmasi *YA* untuk publish ke semua akun\n\n' +
   '*Alur scrape & repost:*\n' +
-  '1. /adduser @username — tambah akun sumber\n' +
-  '2. 🏷 Bank Caption — tambahkan caption\n' +
-  '3. /scrape @username — ambil postingan foto\n' +
-  '4. Preview muncul + caption otomatis dari bank\n' +
-  '5. *Ganti Caption* atau *Tulis Sendiri* jika perlu\n' +
-  '6. Tekan *Post Sekarang* untuk publish\n\n' +
+  '1. Set `TWITTER_COOKIES` di `.env` (F12 → Cookies → x.com)\n' +
+  '2. /adduser @username — tambah akun sumber\n' +
+  '3. 🏷 Bank Caption — tambahkan caption\n' +
+  '4. /scrape @username — ambil postingan foto\n' +
+  '5. Preview muncul + caption otomatis dari bank\n' +
+  '6. *Ganti Caption* atau *Tulis Sendiri* jika perlu\n' +
+  '7. Tekan *Post Sekarang* untuk publish\n\n' +
   '*Multi-akun:*\n' +
   '• Tambah beberapa akun X\n' +
   '• 1 foto + caption → otomatis ke semua akun\n\n' +
   '*Command Terminal (di komputer server):*\n' +
   '`npm run dev` — Jalankan bot\n' +
   '`npm run build` — Compile project\n' +
-  '`npm start` — Jalankan production\n' +
-  '`npm run scrape:login` — Login browser scraper';
+  '`npm start` — Jalankan production';
 
 export async function handleStart(ctx: Context & BotContext): Promise<void> {
   await ctx.reply(

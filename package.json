@@ -10,13 +10,14 @@
     "login": "tsx src/scripts/login.ts",
     "login:clear": "tsx src/scripts/clear-profile.ts",
     "session:check": "tsx src/scripts/check-session.ts",
-    "scrape:login": "tsx src/scripts/scrape-login.ts",
     "browser:install": "playwright install chromium"
   },
   "dependencies": {
+    "@the-convocation/twitter-scraper": "^0.22.3",
     "dotenv": "^16.5.0",
     "playwright": "^1.52.0",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "tough-cookie": "^6.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",

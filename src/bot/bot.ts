@@ -37,7 +37,6 @@ import {
   handleScrapeUsernameInput,
   handleScrapeAll,
   handleScraperMenu,
-  handleScraperLogin,
   handleCheckScraperSession,
   handleManualCaptionInput,
 } from './handlers/scrape';
@@ -92,8 +91,7 @@ export function createBot(): Telegraf<AppContext> {
 
   // Scraper management
   bot.hears('🔍 Scraper', handleScraperMenu);
-  bot.hears('🔑 Login Scraper', handleScraperLogin);
-  bot.hears('🔎 Cek Session Scraper', handleCheckScraperSession);
+  bot.hears('🔎 Cek Cookie Scraper', handleCheckScraperSession);
   bot.hears('🔄 Scrape Semua Akun', handleScrapeAll);
 
   // Caption bank management

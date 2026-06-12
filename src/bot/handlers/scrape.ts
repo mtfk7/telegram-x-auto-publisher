@@ -26,8 +26,6 @@ import {
   scrapeUserPosts,
   downloadImage,
   hasScraperSession,
-  loginScraper,
-  getScraperProfilePath,
 } from '../../services/scrape.service';
 import {
   publishToAllAccounts,
@@ -295,12 +293,12 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     watchedUser = addWatchedUser(username);
   }
 
-  // Check scraper session
+  // Check scraper session (cookies)
   if (!hasScraperSession()) {
     await ctx.reply(
-      '⚠️ Session scraper belum ada.\n\n' +
-      'Jalankan di terminal:\n`npm run scrape:login`\n\n' +
-      'Atau coba scrape langsung (mungkin terbatas).',
+      '⚠️ Cookie Twitter belum diatur.\n\n' +
+      'Tambahkan `TWITTER_COOKIES=ct0=...; auth_token=...` di `.env`\n\n' +
+      'Cara mendapat: F12 → Application → Cookies → x.com',
       { parse_mode: 'Markdown', ...mainMenuKeyboard }
     );
   }
@@ -360,7 +358,7 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown error';
     await ctx.reply(
       `❌ Gagal scraping @${username}.\n\n${message}\n\n` +
-      `Pastikan scraper sudah login: \`npm run scrape:login\``,
+      `Pastikan TWITTER_COOKIES sudah diatur di .env`,
       { parse_mode: 'Markdown', ...mainMenuKeyboard }
     );
   }
@@ -690,14 +688,13 @@ export async function handleScrapeAll(ctx: Context & BotContext): Promise<void> 
 // ── Scraper Menu ──
 
 export async function handleScraperMenu(ctx: Context & BotContext): Promise<void> {
-  const sessionExists = hasScraperSession();
-  const profilePath = getScraperProfilePath();
+  const cookiesExist = hasScraperSession();
 
   let statusText = '';
-  if (sessionExists) {
-    statusText = '🟢 Session scraper ada';
+  if (cookiesExist) {
+    statusText = '🟢 Cookie Twitter sudah diatur';
   } else {
-    statusText = '🔴 Session scraper belum ada';
+    statusText = '🔴 Cookie Twitter belum diatur';
   }
 
   const pendingCount = getPendingPostsCount();
@@ -713,75 +710,26 @@ export async function handleScraperMenu(ctx: Context & BotContext): Promise<void
   );
 }
 
-export async function handleScraperLogin(ctx: Context & BotContext): Promise<void> {
-  await ctx.reply(
-    '🔑 *Login Scraper*\n\n' +
-    'Membuka browser untuk login ke X.com...\n' +
-    'Login seperti biasa di browser yang terbuka.\n' +
-    'Session akan tersimpan otomatis.\n\n' +
-    '⏳ Mohon tunggu (timeout 5 menit).',
-    { parse_mode: 'Markdown' }
-  );
 
-  try {
-    await loginScraper();
-
-    await ctx.reply(
-      '✅ *Login scraper berhasil!*\n\n' +
-      'Session tersimpan. Sekarang bisa scraping via:\n' +
-      '/scrape @username — scrape akun tertentu\n' +
-      '🔄 Scrape Semua Akun — scrape semua akun',
-      { parse_mode: 'Markdown', ...scraperMenuKeyboard }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Login gagal';
-    await ctx.reply(
-      `❌ Login scraper gagal.\n\n${message}\n\nCoba lagi atau jalankan di terminal:\n\`npm run scrape:login\``,
-      { parse_mode: 'Markdown', ...scraperMenuKeyboard }
-    );
-  }
-}
 
 export async function handleCheckScraperSession(ctx: Context & BotContext): Promise<void> {
-  const profilePath = getScraperProfilePath();
-  const sessionExists = hasScraperSession();
+  const cookiesExist = hasScraperSession();
 
-  let text = '🔎 *Status Session Scraper*\n\n';
-  text += `Profile path:\n\`${profilePath}\`\n\n`;
+  let text = '🔎 *Status Cookie Scraper*\n\n';
 
-  if (!sessionExists) {
-    text += '🔴 *Session belum ada*\n\n';
-    text += 'Tekan *🔑 Login Scraper* untuk login.';
+  if (!cookiesExist) {
+    text += '🔴 *Cookie Twitter belum diatur*\n\n';
+    text += 'Tambahkan `TWITTER_COOKIES=ct0=...; auth_token=...` di `.env`\n\n';
+    text += 'Cara mendapat cookie:\n';
+    text += '1. Login ke x.com di browser lokal\n';
+    text += '2. F12 → Application → Cookies → x.com\n';
+    text += '3. Copy nilai `ct0` dan `auth_token`\n';
+    text += '4. Paste ke `.env`: `TWITTER_COOKIES=ct0=...; auth_token=...`';
   } else {
-    text += '🟢 *Session ada*\n\n';
-
-    // Try to get more info by launching a quick check
-    text += 'Mengecek status login...\n';
-    await ctx.reply(text, { parse_mode: 'Markdown' });
-
-    try {
-      const { getSessionInfo } = await import('../../services/browser.service');
-      const info = await getSessionInfo(profilePath);
-
-      let detail = '🔎 *Status Session Scraper*\n\n';
-      detail += `Status: ${info.status === 'active' ? '🟢 Aktif' : info.status === 'expired' ? '🟡 Expired' : '🔴 Missing'}\n`;
-      detail += `Login: ${info.loggedIn ? '✅ Ya' : '❌ Tidak'}\n`;
-      if (info.username) detail += `Username: ${info.username}\n`;
-      detail += `auth_token: ${info.hasAuthToken ? '✅' : '❌'}\n`;
-      detail += `ct0: ${info.hasCt0 ? '✅' : '❌'}\n`;
-
-      if (info.status !== 'active') {
-        detail += '\n⚠️ Session expired. Tekan *🔑 Login Scraper* untuk login ulang.';
-      }
-
-      await ctx.reply(detail, { parse_mode: 'Markdown', ...scraperMenuKeyboard });
-    } catch (err) {
-      await ctx.reply(
-        `⚠️ Gagal mengecek session detail.\nSession file ada tapi mungkin corrupt.\n\nCoba login ulang via *🔑 Login Scraper*.`,
-        { parse_mode: 'Markdown', ...scraperMenuKeyboard }
-      );
-    }
-    return;
+    text += '🟢 *Cookie Twitter sudah diatur*\n\n';
+    text += 'Scraping akan menggunakan cookie-based authentication.\n';
+    text += 'Jika scraping gagal, mungkin cookie sudah expired.\n';
+    text += 'Export ulang dari browser dan update `.env`.';
   }
 
   await ctx.reply(text, { parse_mode: 'Markdown', ...scraperMenuKeyboard });

@@ -1,8 +1,8 @@
-import { chromium, BrowserContext, Page } from 'playwright';
+import { Scraper, Tweet } from '@the-convocation/twitter-scraper';
+import { Cookie } from 'tough-cookie';
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config';
-import { resolveBrowserLaunch } from '../utils/browser';
 import { log, logError, logDebug } from '../utils/logger';
 
 export interface ScrapedPost {
@@ -15,126 +15,33 @@ export interface ScrapedPost {
 let scrapeInProgress = false;
 
 /**
- * Dedicated browser profile for scraping (separate from publishing accounts).
+ * Create a Scraper instance with cookie-based authentication.
  */
-function getScraperProfileDir(): string {
-  return path.join(config.profilesDir, '_scraper');
-}
+function createScraper(): Scraper {
+  const scraper = new Scraper();
 
-async function launchScraperContext(headless?: boolean): Promise<BrowserContext> {
-  const profileDir = getScraperProfileDir();
-  fs.mkdirSync(profileDir, { recursive: true });
+  if (config.twitterCookies) {
+    const cookies = config.twitterCookies
+      .split(';')
+      .map((c) => Cookie.parse(c.trim()))
+      .filter(Boolean);
 
-  const launch = resolveBrowserLaunch(config.browser);
-
-  return chromium.launchPersistentContext(profileDir, {
-    ...launch,
-    headless: headless ?? config.browser.headless,
-    viewport: { width: 1366, height: 768 },
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    locale: 'id-ID',
-    timezoneId: 'Asia/Jakarta',
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--no-first-run',
-    ],
-    ignoreDefaultArgs: ['--enable-automation'],
-  });
-}
-
-/**
- * Scroll down the page to load more tweets.
- */
-async function scrollTimeline(page: Page, times: number): Promise<void> {
-  for (let i = 0; i < times; i++) {
-    await page.evaluate('window.scrollBy(0, window.innerHeight)');
-    await page.waitForTimeout(1500);
-    logDebug(`Scroll ${i + 1}/${times} selesai`);
-  }
-}
-
-/**
- * Extract tweets with images from the currently loaded timeline.
- */
-async function extractTweetsWithImages(page: Page): Promise<ScrapedPost[]> {
-  const posts: ScrapedPost[] = [];
-  const seen = new Set<string>();
-
-  // Get all tweet articles on the page
-  const articles = page.locator('article[data-testid="tweet"]');
-  const count = await articles.count();
-  logDebug(`Ditemukan ${count} tweet di timeline`);
-
-  for (let i = 0; i < count; i++) {
-    try {
-      const article = articles.nth(i);
-
-      // Check if tweet has images (media preview with photos)
-      const images = article.locator(
-        'img[src*="pbs.twimg.com/media"], img[src*="pbs.twimg.com/tweet_video_thumb"]'
-      );
-      const imageCount = await images.count();
-      if (imageCount === 0) continue;
-
-      // Get the first/largest image URL
-      let imageUrl = await images.first().getAttribute('src');
-      if (!imageUrl) continue;
-
-      // Upgrade to large quality
-      if (imageUrl.includes('pbs.twimg.com/media')) {
-        // Remove existing size params and add large
-        imageUrl = imageUrl.replace(/\?format=.+$/, '');
-        imageUrl = imageUrl.replace(/&name=\w+$/, '');
-        if (!imageUrl.includes('?')) {
-          imageUrl += '?format=jpg&name=large';
-        }
-      }
-
-      // Get tweet URL from the timestamp link
-      const timeLink = article.locator('a[href*="/status/"]').first();
-      const href = await timeLink.getAttribute('href').catch(() => null);
-      if (!href) continue;
-
-      const sourceUrl = href.startsWith('http') ? href : `https://x.com${href}`;
-
-      // Skip duplicates
-      if (seen.has(sourceUrl)) continue;
-      seen.add(sourceUrl);
-
-      // Get tweet text/caption
-      const textEl = article.locator('[data-testid="tweetText"]').first();
-      const caption = await textEl.innerText().catch(() => '');
-
-      // Get post date from <time> element
-      const timeEl = article.locator('time').first();
-      const datetime = await timeEl.getAttribute('datetime').catch(() => '');
-      const postDate = datetime || '';
-
-      posts.push({
-        sourceUrl,
-        caption: caption.trim(),
-        imageUrl,
-        postDate,
-      });
-
-      logDebug(`Tweet ditemukan: ${sourceUrl} (${caption.slice(0, 50)}...)`);
-    } catch (err) {
-      logDebug(`Gagal extract tweet #${i}: ${err}`);
-      continue;
-    }
+    scraper.setCookies(cookies as Cookie[]);
+    logDebug('Cookie Twitter diterapkan untuk scraping');
+  } else {
+    logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
   }
 
-  return posts;
+  return scraper;
 }
 
 /**
  * Scrape recent photo posts from a given X username's timeline.
+ * Uses @the-convocation/twitter-scraper (no browser needed).
  */
 export async function scrapeUserPosts(
   username: string,
-  maxScrolls = 5
+  maxTweets = 20
 ): Promise<ScrapedPost[]> {
   if (scrapeInProgress) {
     throw new Error('Scraping lain sedang berjalan. Tunggu sampai selesai.');
@@ -144,30 +51,54 @@ export async function scrapeUserPosts(
   const cleanUsername = username.replace(/^@/, '');
   log(`Memulai scraping @${cleanUsername}...`, 'INFO');
 
-  const context = await launchScraperContext();
-  const page = context.pages()[0] || (await context.newPage());
+  const scraper = createScraper();
+  const posts: ScrapedPost[] = [];
+  const seen = new Set<string>();
 
   try {
-    // Navigate to user profile
-    logDebug(`Navigasi ke https://x.com/${cleanUsername}`);
-    await page.goto(`https://x.com/${cleanUsername}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
+    logDebug(`Mengambil tweet dari @${cleanUsername} via API...`);
 
-    // Wait for timeline to load
-    logDebug('Menunggu timeline...');
-    await page.waitForSelector('article[data-testid="tweet"]', {
-      timeout: 20000,
-    }).catch(() => null);
+    const tweetIterator = scraper.getTweets(cleanUsername, maxTweets);
 
-    await page.waitForTimeout(2000);
+    for await (const tweet of tweetIterator) {
+      try {
+        // Skip tweets without photos
+        if (!tweet.photos || tweet.photos.length === 0) continue;
 
-    // Scroll to load more tweets
-    await scrollTimeline(page, maxScrolls);
+        // Build source URL
+        const sourceUrl =
+          tweet.permanentUrl ||
+          `https://x.com/${cleanUsername}/status/${tweet.id}`;
 
-    // Extract tweets with images
-    const posts = await extractTweetsWithImages(page);
+        // Skip duplicates
+        if (seen.has(sourceUrl)) continue;
+        seen.add(sourceUrl);
+
+        // Get first photo URL
+        const imageUrl = tweet.photos[0].url || '';
+        if (!imageUrl) continue;
+
+        // Get caption text
+        const caption = tweet.text || '';
+
+        // Get post date
+        const postDate = tweet.timestamp
+          ? new Date(tweet.timestamp * 1000).toISOString()
+          : '';
+
+        posts.push({
+          sourceUrl,
+          caption: caption.trim(),
+          imageUrl,
+          postDate,
+        });
+
+        logDebug(`Tweet ditemukan: ${sourceUrl} (${caption.slice(0, 50)}...)`);
+      } catch (err) {
+        logDebug(`Gagal proses tweet: ${err}`);
+        continue;
+      }
+    }
 
     log(`Scraping @${cleanUsername}: ${posts.length} postingan foto ditemukan`, 'INFO');
     return posts;
@@ -177,9 +108,8 @@ export async function scrapeUserPosts(
       `Gagal scraping @${cleanUsername}: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   } finally {
-    await context.close();
     scrapeInProgress = false;
-    logDebug('Browser scraper ditutup');
+    logDebug('Scraping selesai');
   }
 }
 
@@ -202,38 +132,8 @@ export async function downloadImage(imageUrl: string, destPath: string): Promise
 }
 
 /**
- * Check if the scraper profile exists (has a browser session).
+ * Check if Twitter cookies are configured for scraping.
  */
 export function hasScraperSession(): boolean {
-  return fs.existsSync(getScraperProfileDir());
-}
-
-/**
- * Get the scraper profile directory path.
- */
-export function getScraperProfilePath(): string {
-  return getScraperProfileDir();
-}
-
-/**
- * Launch scraper browser for manual login (interactive).
- */
-export async function loginScraper(): Promise<void> {
-  const context = await launchScraperContext(false); // always visible for login
-  const page = context.pages()[0] || (await context.newPage());
-
-  try {
-    await page.goto('https://x.com', { waitUntil: 'domcontentloaded' });
-    console.log('Browser terbuka. Login ke X.com, lalu tutup browser.');
-    console.log('Session scraper akan tersimpan untuk scraping selanjutnya.\n');
-
-    // Wait for login to complete
-    await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', {
-      timeout: 300000,
-    });
-
-    console.log('✅ Login scraper berhasil!');
-  } finally {
-    await context.close();
-  }
+  return !!config.twitterCookies;
 }

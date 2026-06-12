@@ -40,6 +40,7 @@ export const config = {
   },
   maxPhotoSizeMb: parseInt(process.env.MAX_PHOTO_SIZE_MB || '20', 10),
   maxReplyTextLength: parseInt(process.env.MAX_REPLY_TEXT_LENGTH || '280', 10),
+  twitterCookies: process.env.TWITTER_COOKIES || '',
 };
 
 export function getAccountProfileDir(accountName: string): string {
