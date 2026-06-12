@@ -1,0 +1,26 @@
+{
+  "name": "telegram-x-auto-publisher",
+  "version": "2.0.0",
+  "description": "Telegram to X posting via browser automation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "login": "tsx src/scripts/login.ts",
+    "login:clear": "tsx src/scripts/clear-profile.ts",
+    "session:check": "tsx src/scripts/check-session.ts",
+    "scrape:login": "tsx src/scripts/scrape-login.ts",
+    "browser:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "playwright": "^1.52.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
