@@ -10,7 +10,7 @@ export interface BrowserLaunchConfig {
   channel?: string;
 }
 
-const BRAVE_PATHS = [
+const BRAVE_PATHS_WIN = [
   'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   path.join(
@@ -23,6 +23,15 @@ const BRAVE_PATHS = [
     'brave.exe'
   ),
 ];
+
+const BRAVE_PATHS_LINUX = [
+  '/usr/bin/brave-browser',
+  '/usr/bin/brave',
+  '/snap/bin/brave',
+  '/opt/brave.com/brave/brave-browser',
+];
+
+const BRAVE_PATHS = [...BRAVE_PATHS_WIN, ...BRAVE_PATHS_LINUX];
 
 function findBraveExecutable(): string | undefined {
   return BRAVE_PATHS.find((p) => fs.existsSync(p));
