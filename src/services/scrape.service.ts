@@ -1,5 +1,4 @@
 import { Scraper, Tweet } from '@the-convocation/twitter-scraper';
-import { Cookie } from 'tough-cookie';
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config';
@@ -17,16 +16,16 @@ let scrapeInProgress = false;
 /**
  * Create a Scraper instance with cookie-based authentication.
  */
-function createScraper(): Scraper {
+async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
 
   if (config.twitterCookies) {
-    const cookies = config.twitterCookies
+    const cookieParts = config.twitterCookies
       .split(';')
-      .map((c) => Cookie.parse(c.trim()))
+      .map((c) => c.trim())
       .filter(Boolean);
 
-    scraper.setCookies(cookies as Cookie[]);
+    await scraper.setCookies(cookieParts);
     logDebug('Cookie Twitter diterapkan untuk scraping');
   } else {
     logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
@@ -51,7 +50,7 @@ export async function scrapeUserPosts(
   const cleanUsername = username.replace(/^@/, '');
   log(`Memulai scraping @${cleanUsername}...`, 'INFO');
 
-  const scraper = createScraper();
+  const scraper = await createScraper();
   const posts: ScrapedPost[] = [];
   const seen = new Set<string>();
 
