@@ -23,7 +23,8 @@ async function createScraper(): Promise<Scraper> {
     const cookieParts = config.twitterCookies
       .split(';')
       .map((c) => c.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((c) => `${c}; Domain=.x.com; Path=/`);
 
     await scraper.setCookies(cookieParts);
     logDebug('Cookie Twitter diterapkan untuk scraping');
