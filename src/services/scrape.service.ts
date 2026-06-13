@@ -20,13 +20,39 @@ async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
 
   if (config.twitterCookies) {
-    const cookieParts = config.twitterCookies
+    // Parse cookies from "key=value; key=value" format into full Set-Cookie strings
+    const cookiePairs = config.twitterCookies
       .split(';')
       .map((c) => c.trim())
-      .filter(Boolean)
-      .map((c) => `${c}; Domain=.x.com; Path=/`);
+      .filter(Boolean);
 
-    await scraper.setCookies(cookieParts);
+    // Use library's internal Cookie class for reliable parsing
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const toughCookie = require('@the-convocation/twitter-scraper/node_modules/tough-cookie');
+    const { Cookie } = toughCookie;
+
+    const cookies = cookiePairs
+      .map((pair) => {
+        const parsed = Cookie.parse(`${pair}; Domain=x.com; Path=/`);
+        return parsed;
+      })
+      .filter(Boolean);
+
+    logDebug(`Parsed ${cookies.length} cookies: ${cookies.map((c: any) => c.key).join(', ')}`);
+
+    await scraper.setCookies(cookies);
+
+    // Verify cookies are set correctly
+    const verifyCookies = await scraper.getCookies();
+    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
+    logDebug(`CSRF cookie (ct0) in jar: ${ct0 ? 'YES' : 'NO'}`);
+
+    if (!ct0) {
+      logError('ct0 cookie not found in cookie jar after setCookies', new Error(
+        `Available cookies: ${verifyCookies.map((c: any) => c.key).join(', ')}`
+      ));
+    }
+
     logDebug('Cookie Twitter diterapkan untuk scraping');
   } else {
     logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
