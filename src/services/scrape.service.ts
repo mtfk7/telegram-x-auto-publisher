@@ -27,6 +27,8 @@ async function createScraper(): Promise<Scraper> {
       .filter(Boolean);
 
     const authPair = cookiePairs.find((p) => p.toLowerCase().startsWith('auth_token='));
+    const ct0Pair = cookiePairs.find((p) => p.toLowerCase().startsWith('ct0='));
+
     if (!authPair) {
       logError('auth_token cookie not found in TWITTER_COOKIES', new Error(
         `Available cookies: ${cookiePairs.map((c) => c.split('=')[0]).join(', ')}`
@@ -39,34 +41,34 @@ async function createScraper(): Promise<Scraper> {
     });
     const { Cookie } = require(toughCookiePath);
 
-    // Step 1: Make an unauthenticated request to get a FRESH ct0 from Twitter
-    logDebug('Mengambil ct0 baru dari Twitter...');
-    try {
-      await scraper.getProfile('twitter').catch(() => null);
-    } catch {
-      // Expected to fail, we just need the fresh ct0 cookie from the response
-    }
-
-    // Step 2: Inject our auth_token (and optionally our ct0) into the cookie jar
+    // Set ALL cookies (ct0 + auth_token) together in one call
+    // setCookies creates a new auth, so we must set everything at once
     const cookiesToSet: any[] = [];
+    if (ct0Pair) {
+      const ct0Cookie = Cookie.parse(`${ct0Pair}; Domain=x.com; Path=/`);
+      if (ct0Cookie) cookiesToSet.push(ct0Cookie);
+    }
     if (authPair) {
       const authCookie = Cookie.parse(`${authPair}; Domain=x.com; Path=/`);
       if (authCookie) cookiesToSet.push(authCookie);
     }
 
+    // Fix domain for cookie objects (library expects no leading dot)
     for (const cookie of cookiesToSet) {
       if (cookie.domain && cookie.domain.startsWith('.')) {
         cookie.domain = cookie.domain.substring(1);
         cookie.hostOnly = false;
       }
     }
+
+    logDebug(`Setting ${cookiesToSet.length} cookies: ${cookiesToSet.map((c: any) => c.key).join(', ')}`);
     await scraper.setCookies(cookiesToSet);
 
     // Verify cookies
     const verifyCookies = await scraper.getCookies();
     const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
     const authToken = verifyCookies.find((c: any) => c.key === 'auth_token');
-    logDebug(`Cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authToken ? 'YES' : 'NO'}`);
+    logDebug(`Cookie check - ct0: ${ct0 ? ct0.value.slice(0, 8) + '...' : 'NO'}, auth_token: ${authToken ? authToken.value.slice(0, 8) + '...' : 'NO'}`);
     logDebug('Cookie Twitter diterapkan untuk scraping');
   } else {
     logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
