@@ -48,10 +48,7 @@ function loadSavedCookies(): any[] | null {
  *
  * Flow:
  * 1. Try loading saved session from file (fast path)
- * 2. If no session: create guest auth, warmup to get fresh ct0, then inject auth_token
- *
- * The key insight: we MUST use the library's own ct0 (not browser's stale ct0)
- * because Twitter validates that x-csrf-token header matches the session's ct0.
+ * 2. If no session: fetch fresh ct0 via direct HTTP, inject ct0 + auth_token into cookie jar
  */
 async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
@@ -83,42 +80,100 @@ async function createScraper(): Promise<Scraper> {
     }
   }
 
-  // Step 2: Warmup - make a guest request to get a fresh ct0 from Twitter
-  // This triggers guest token activation and stores a fresh ct0 in the cookie jar
-  logDebug('Warming up guest auth to get fresh ct0...');
+  // Step 2: Get fresh ct0 via direct HTTP request to Twitter API
+  logDebug('Fetching fresh ct0 from Twitter...');
   const auth = (scraper as any).auth;
   if (!auth || !auth.cookieJar) {
     throw new Error('Cannot access library auth instance');
   }
 
+  // Trigger guest token activation (needed for API requests)
+  if (!auth.guestToken) {
+    try {
+      await auth.updateGuestToken();
+    } catch (err) {
+      logDebug(`Guest token update failed: ${err}`);
+    }
+  }
+  logDebug(`Guest token: ${auth.guestToken ? auth.guestToken.slice(0, 8) + '...' : 'NONE'}`);
+
+  // Make a direct request to get a fresh ct0 from Twitter's response
+  const bearerToken = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+  const guestHeaders: Record<string, string> = {
+    'authorization': `Bearer ${decodeURIComponent(bearerToken)}`,
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+    'x-guest-token': auth.guestToken || '',
+    'content-type': 'application/json',
+  };
+
   try {
-    await scraper.getProfile('twitter');
-  } catch {
-    // Expected to fail (unauthenticated), but the response sets cookies in the jar
+    const res = await fetch('https://api.x.com/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName?variables=%7B%22screen_name%22%3A%22twitter%22%7D', {
+      method: 'GET',
+      headers: guestHeaders,
+    });
+
+    // Extract ct0 from response set-cookie header
+    const setCookieHeaders = res.headers.getSetCookie?.() || [];
+    let freshCt0 = '';
+
+    for (const cookieStr of setCookieHeaders) {
+      const match = cookieStr.match(/^ct0=([^;]+)/);
+      if (match) {
+        freshCt0 = match[1];
+        break;
+      }
+    }
+
+    if (!freshCt0) {
+      // Try parsing from single set-cookie header
+      const singleHeader = res.headers.get('set-cookie') || '';
+      const ct0Match = singleHeader.match(/ct0=([^;]+)/);
+      if (ct0Match) {
+        freshCt0 = ct0Match[1];
+      }
+    }
+
+    if (freshCt0) {
+      logDebug(`Fresh ct0 from response: ${freshCt0.slice(0, 12)}...`);
+    } else {
+      logDebug('No ct0 in response headers, checking cookie jar...');
+    }
+
+    // Also try reading ct0 from the jar (library may have stored it)
+    const jarCookies = await scraper.getCookies();
+    const jarCt0 = jarCookies.find((c: any) => c.key === 'ct0');
+    const ct0ToUse = freshCt0 || jarCt0?.value || '';
+
+    if (!ct0ToUse) {
+      throw new Error('Failed to obtain ct0 from Twitter');
+    }
+
+    logDebug(`Using ct0: ${ct0ToUse.slice(0, 12)}...`);
+
+    // Step 3: Inject ct0 + auth_token into the auth's cookie jar
+    const cookieJar = auth.cookieJar();
+    const cookieUrl = 'https://x.com';
+
+    await cookieJar.setCookie(
+      `ct0=${ct0ToUse}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
+      cookieUrl
+    );
+    await cookieJar.setCookie(
+      `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
+      cookieUrl
+    );
+
+    logDebug(`Injected ct0 + auth_token into cookie jar`);
+
+    // Step 4: Verify
+    const verifyCookies = await scraper.getCookies();
+    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
+    const authTk = verifyCookies.find((c: any) => c.key === 'auth_token');
+    logDebug(`Final check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authTk ? 'YES' : 'NO'}`);
+  } catch (err) {
+    logError('Failed to set up scraper auth', err);
+    throw new Error(`Gagal menyiapkan scraper: ${err instanceof Error ? err.message : 'Unknown error'}`);
   }
-
-  // Step 3: Check that we got a fresh ct0
-  const preCookies = await scraper.getCookies();
-  const freshCt0 = preCookies.find((c: any) => c.key === 'ct0');
-  if (!freshCt0) {
-    logError('Failed to get fresh ct0 from guest auth', new Error('No ct0 cookie after warmup'));
-  }
-  logDebug(`Fresh ct0 obtained: ${freshCt0?.value?.slice(0, 12)}...`);
-
-  // Step 4: Inject auth_token into the EXISTING auth's cookie jar
-  // We do NOT call scraper.setCookies() because that creates a new auth (loses guest token)
-  const cookieJar = auth.cookieJar();
-  await cookieJar.setCookie(
-    `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
-    'https://x.com'
-  );
-  logDebug(`auth_token injected: ${authTokenValue.slice(0, 8)}...`);
-
-  // Step 5: Verify
-  const finalCookies = await scraper.getCookies();
-  const ct0 = finalCookies.find((c: any) => c.key === 'ct0');
-  const authTk = finalCookies.find((c: any) => c.key === 'auth_token');
-  logDebug(`Final cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authTk ? 'YES' : 'NO'}`);
 
   return scraper;
 }
