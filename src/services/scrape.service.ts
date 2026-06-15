@@ -80,8 +80,8 @@ async function createScraper(): Promise<Scraper> {
     }
   }
 
-  // Step 2: Get fresh ct0 via direct HTTP request to Twitter API
-  logDebug('Fetching fresh ct0 from Twitter...');
+  // Step 2: Get fresh ct0 by simulating browser preflight (like visiting x.com login page)
+  logDebug('Fetching fresh ct0 via preflight request...');
   const auth = (scraper as any).auth;
   if (!auth || !auth.cookieJar) {
     throw new Error('Cannot access library auth instance');
@@ -97,78 +97,87 @@ async function createScraper(): Promise<Scraper> {
   }
   logDebug(`Guest token: ${auth.guestToken ? auth.guestToken.slice(0, 8) + '...' : 'NONE'}`);
 
-  // Make a direct request to get a fresh ct0 from Twitter's response
-  const bearerToken = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
-  const guestHeaders: Record<string, string> = {
-    'authorization': `Bearer ${decodeURIComponent(bearerToken)}`,
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-    'x-guest-token': auth.guestToken || '',
-    'content-type': 'application/json',
-  };
-
   try {
-    const res = await fetch('https://api.x.com/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName?variables=%7B%22screen_name%22%3A%22twitter%22%7D', {
-      method: 'GET',
-      headers: guestHeaders,
+    // Preflight: fetch the login page like a browser to get ct0 cookie
+    // This is exactly what the library's TwitterUserAuth.preflight() does
+    const preflightHeaders: Record<string, string> = {
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
+      'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'none',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+    };
+
+    const res = await fetch('https://x.com/i/flow/login', {
+      redirect: 'follow',
+      headers: preflightHeaders,
     });
 
-    logDebug(`Direct fetch status: ${res.status}`);
+    logDebug(`Preflight status: ${res.status}`);
 
-    // Extract ct0 from ALL possible response header locations
+    // Extract ct0 from response cookies
     let freshCt0 = '';
 
-    // Method 1: getSetCookie() (Node.js 19+)
+    // Method 1: getSetCookie()
     if (typeof res.headers.getSetCookie === 'function') {
       const setCookieHeaders = res.headers.getSetCookie();
-      logDebug(`getSetCookie count: ${setCookieHeaders.length}`);
+      logDebug(`Preflight set-cookie count: ${setCookieHeaders.length}`);
       for (const cookieStr of setCookieHeaders) {
+        logDebug(`  Cookie: ${cookieStr.slice(0, 60)}...`);
         const match = cookieStr.match(/^ct0=([^;]+)/);
         if (match) {
           freshCt0 = match[1];
-          break;
         }
       }
     }
 
-    // Method 2: raw headers via entries()
+    // Method 2: scan all headers
     if (!freshCt0) {
-      const allHeaders: string[] = [];
       res.headers.forEach((value, key) => {
-        allHeaders.push(`${key}: ${value}`);
-      });
-      logDebug(`Response headers: ${allHeaders.length} entries`);
-      
-      // Check set-cookie from raw entries
-      for (const h of allHeaders) {
-        if (h.toLowerCase().includes('ct0=')) {
-          const match = h.match(/ct0=([^;]+)/);
-          if (match) {
+        if (key.toLowerCase() === 'set-cookie' || value.includes('ct0=')) {
+          const match = value.match(/ct0=([^;]+)/);
+          if (match && !freshCt0) {
             freshCt0 = match[1];
-            logDebug(`Found ct0 in raw headers`);
-            break;
           }
         }
-      }
+      });
     }
 
     if (freshCt0) {
-      logDebug(`Fresh ct0 from response: ${freshCt0.slice(0, 12)}...`);
+      logDebug(`Fresh ct0 from preflight: ${freshCt0.slice(0, 12)}...`);
     } else {
-      logDebug('No ct0 found in response headers');
+      // Fallback: try library's own preflight method if available
+      logDebug('No ct0 from direct preflight, trying auth.preflight()...');
+      if (typeof auth.preflight === 'function') {
+        await auth.preflight();
+      }
+      // Also try library warmup
+      try {
+        await scraper.getProfile('twitter');
+      } catch {
+        // Expected to fail, but updateCookieJar stores response cookies
+      }
     }
 
-    // Method 3: Also try reading ct0 from the jar (library's updateGuestToken might have stored it)
+    // Check jar for ct0 (from any of the above methods)
     const jarCookies = await scraper.getCookies();
     const jarCt0 = jarCookies.find((c: any) => c.key === 'ct0');
     if (jarCt0) {
-      logDebug(`Found ct0 in cookie jar: ${jarCt0.value.slice(0, 12)}...`);
+      logDebug(`Found ct0 in jar: ${jarCt0.value.slice(0, 12)}...`);
     }
+
     const ct0ToUse = freshCt0 || jarCt0?.value || '';
 
     if (ct0ToUse) {
       logDebug(`Using ct0: ${ct0ToUse.slice(0, 12)}...`);
 
-      // Step 3: Inject ct0 + auth_token into the auth's cookie jar
+      // Inject ct0 + auth_token into the auth's cookie jar
       const cookieJar = auth.cookieJar();
       const cookieUrl = 'https://x.com';
 
@@ -183,33 +192,10 @@ async function createScraper(): Promise<Scraper> {
 
       logDebug(`Injected ct0 + auth_token into cookie jar`);
     } else {
-      // Step 3 fallback: Let the library handle it - make a request that will fail
-      // but updateCookieJar stores the response cookies (including ct0) in the jar
-      logDebug('No ct0 found yet, trying library warmup request...');
-      try {
-        await scraper.getProfile('twitter');
-      } catch {
-        // Expected to fail, but updateCookieJar stores response cookies
-      }
-
-      // Check jar again after warmup
-      const postCookies = await scraper.getCookies();
-      const postCt0 = postCookies.find((c: any) => c.key === 'ct0');
-
-      if (postCt0) {
-        logDebug(`Got ct0 from library warmup: ${postCt0.value.slice(0, 12)}...`);
-        // Inject auth_token (ct0 already in jar from warmup)
-        const cookieJar = auth.cookieJar();
-        await cookieJar.setCookie(
-          `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
-          'https://x.com'
-        );
-      } else {
-        throw new Error('Failed to obtain ct0 from Twitter (tried direct fetch + library warmup)');
-      }
+      throw new Error('Failed to obtain ct0 from Twitter (tried preflight + library warmup)');
     }
 
-    // Step 4: Verify
+    // Verify
     const verifyCookies = await scraper.getCookies();
     const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
     const authTk = verifyCookies.find((c: any) => c.key === 'auth_token');
