@@ -112,58 +112,102 @@ async function createScraper(): Promise<Scraper> {
       headers: guestHeaders,
     });
 
-    // Extract ct0 from response set-cookie header
-    const setCookieHeaders = res.headers.getSetCookie?.() || [];
+    logDebug(`Direct fetch status: ${res.status}`);
+
+    // Extract ct0 from ALL possible response header locations
     let freshCt0 = '';
 
-    for (const cookieStr of setCookieHeaders) {
-      const match = cookieStr.match(/^ct0=([^;]+)/);
-      if (match) {
-        freshCt0 = match[1];
-        break;
+    // Method 1: getSetCookie() (Node.js 19+)
+    if (typeof res.headers.getSetCookie === 'function') {
+      const setCookieHeaders = res.headers.getSetCookie();
+      logDebug(`getSetCookie count: ${setCookieHeaders.length}`);
+      for (const cookieStr of setCookieHeaders) {
+        const match = cookieStr.match(/^ct0=([^;]+)/);
+        if (match) {
+          freshCt0 = match[1];
+          break;
+        }
       }
     }
 
+    // Method 2: raw headers via entries()
     if (!freshCt0) {
-      // Try parsing from single set-cookie header
-      const singleHeader = res.headers.get('set-cookie') || '';
-      const ct0Match = singleHeader.match(/ct0=([^;]+)/);
-      if (ct0Match) {
-        freshCt0 = ct0Match[1];
+      const allHeaders: string[] = [];
+      res.headers.forEach((value, key) => {
+        allHeaders.push(`${key}: ${value}`);
+      });
+      logDebug(`Response headers: ${allHeaders.length} entries`);
+      
+      // Check set-cookie from raw entries
+      for (const h of allHeaders) {
+        if (h.toLowerCase().includes('ct0=')) {
+          const match = h.match(/ct0=([^;]+)/);
+          if (match) {
+            freshCt0 = match[1];
+            logDebug(`Found ct0 in raw headers`);
+            break;
+          }
+        }
       }
     }
 
     if (freshCt0) {
       logDebug(`Fresh ct0 from response: ${freshCt0.slice(0, 12)}...`);
     } else {
-      logDebug('No ct0 in response headers, checking cookie jar...');
+      logDebug('No ct0 found in response headers');
     }
 
-    // Also try reading ct0 from the jar (library may have stored it)
+    // Method 3: Also try reading ct0 from the jar (library's updateGuestToken might have stored it)
     const jarCookies = await scraper.getCookies();
     const jarCt0 = jarCookies.find((c: any) => c.key === 'ct0');
+    if (jarCt0) {
+      logDebug(`Found ct0 in cookie jar: ${jarCt0.value.slice(0, 12)}...`);
+    }
     const ct0ToUse = freshCt0 || jarCt0?.value || '';
 
-    if (!ct0ToUse) {
-      throw new Error('Failed to obtain ct0 from Twitter');
+    if (ct0ToUse) {
+      logDebug(`Using ct0: ${ct0ToUse.slice(0, 12)}...`);
+
+      // Step 3: Inject ct0 + auth_token into the auth's cookie jar
+      const cookieJar = auth.cookieJar();
+      const cookieUrl = 'https://x.com';
+
+      await cookieJar.setCookie(
+        `ct0=${ct0ToUse}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
+        cookieUrl
+      );
+      await cookieJar.setCookie(
+        `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
+        cookieUrl
+      );
+
+      logDebug(`Injected ct0 + auth_token into cookie jar`);
+    } else {
+      // Step 3 fallback: Let the library handle it - make a request that will fail
+      // but updateCookieJar stores the response cookies (including ct0) in the jar
+      logDebug('No ct0 found yet, trying library warmup request...');
+      try {
+        await scraper.getProfile('twitter');
+      } catch {
+        // Expected to fail, but updateCookieJar stores response cookies
+      }
+
+      // Check jar again after warmup
+      const postCookies = await scraper.getCookies();
+      const postCt0 = postCookies.find((c: any) => c.key === 'ct0');
+
+      if (postCt0) {
+        logDebug(`Got ct0 from library warmup: ${postCt0.value.slice(0, 12)}...`);
+        // Inject auth_token (ct0 already in jar from warmup)
+        const cookieJar = auth.cookieJar();
+        await cookieJar.setCookie(
+          `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
+          'https://x.com'
+        );
+      } else {
+        throw new Error('Failed to obtain ct0 from Twitter (tried direct fetch + library warmup)');
+      }
     }
-
-    logDebug(`Using ct0: ${ct0ToUse.slice(0, 12)}...`);
-
-    // Step 3: Inject ct0 + auth_token into the auth's cookie jar
-    const cookieJar = auth.cookieJar();
-    const cookieUrl = 'https://x.com';
-
-    await cookieJar.setCookie(
-      `ct0=${ct0ToUse}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
-      cookieUrl
-    );
-    await cookieJar.setCookie(
-      `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
-      cookieUrl
-    );
-
-    logDebug(`Injected ct0 + auth_token into cookie jar`);
 
     // Step 4: Verify
     const verifyCookies = await scraper.getCookies();
