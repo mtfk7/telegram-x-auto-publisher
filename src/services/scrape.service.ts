@@ -26,10 +26,11 @@ async function createScraper(): Promise<Scraper> {
       .map((c) => c.trim())
       .filter(Boolean);
 
-    // Use library's internal Cookie class for reliable parsing
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const toughCookie = require('@the-convocation/twitter-scraper/node_modules/tough-cookie');
-    const { Cookie } = toughCookie;
+    // Use library's internal tough-cookie for reliable cookie parsing
+    const toughCookiePath = require.resolve('tough-cookie', {
+      paths: [require.resolve('@the-convocation/twitter-scraper')],
+    });
+    const { Cookie } = require(toughCookiePath);
 
     const cookies = cookiePairs
       .map((pair) => {
