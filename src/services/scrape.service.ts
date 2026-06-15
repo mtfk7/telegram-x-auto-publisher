@@ -44,17 +44,28 @@ function loadSavedCookies(): any[] | null {
 }
 
 /**
- * Create a Scraper instance with login-based authentication.
- * Saves and reuses session cookies to avoid repeated logins.
+ * Create a Scraper instance with cookie-based authentication.
+ *
+ * Flow:
+ * 1. Try loading saved session from file (fast path)
+ * 2. If no session: create guest auth, warmup to get fresh ct0, then inject auth_token
+ *
+ * The key insight: we MUST use the library's own ct0 (not browser's stale ct0)
+ * because Twitter validates that x-csrf-token header matches the session's ct0.
  */
 async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
-  const { username, password, email } = config.twitter;
+  const authToken = config.twitterCookies
+    .split(';')
+    .map((c) => c.trim())
+    .find((p) => p.toLowerCase().startsWith('auth_token='));
 
-  if (!username || !password) {
-    logDebug('TWITTER_USERNAME/PASSWORD tidak diatur, scraping tanpa autentikasi');
+  if (!authToken) {
+    logDebug('auth_token not found in TWITTER_COOKIES, scraping tanpa autentikasi');
     return scraper;
   }
+
+  const authTokenValue = authToken.split('=')[1];
 
   // Step 1: Try loading saved session cookies
   const savedCookies = loadSavedCookies();
@@ -66,28 +77,49 @@ async function createScraper(): Promise<Scraper> {
         logDebug('Session cookies valid, skipping login');
         return scraper;
       }
-      logDebug('Saved session expired, re-logging in...');
+      logDebug('Saved session expired, re-authenticating...');
     } catch (err) {
       logDebug(`Failed to load saved cookies: ${err}`);
     }
   }
 
-  // Step 2: Login with credentials
-  logDebug(`Logging in as @${username}...`);
+  // Step 2: Warmup - make a guest request to get a fresh ct0 from Twitter
+  // This triggers guest token activation and stores a fresh ct0 in the cookie jar
+  logDebug('Warming up guest auth to get fresh ct0...');
+  const auth = (scraper as any).auth;
+  if (!auth || !auth.cookieJar) {
+    throw new Error('Cannot access library auth instance');
+  }
+
   try {
-    await scraper.login(username, password, email || undefined);
-  } catch (err) {
-    logError('Twitter login failed', err);
-    throw new Error(`Login Twitter gagal: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    await scraper.getProfile('twitter');
+  } catch {
+    // Expected to fail (unauthenticated), but the response sets cookies in the jar
   }
 
-  const loggedIn = await scraper.isLoggedIn();
-  if (!loggedIn) {
-    throw new Error('Login Twitter berhasil tapi session tidak valid');
+  // Step 3: Check that we got a fresh ct0
+  const preCookies = await scraper.getCookies();
+  const freshCt0 = preCookies.find((c: any) => c.key === 'ct0');
+  if (!freshCt0) {
+    logError('Failed to get fresh ct0 from guest auth', new Error('No ct0 cookie after warmup'));
   }
+  logDebug(`Fresh ct0 obtained: ${freshCt0?.value?.slice(0, 12)}...`);
 
-  logDebug('Login berhasil!');
-  await saveCookies(scraper);
+  // Step 4: Inject auth_token into the EXISTING auth's cookie jar
+  // We do NOT call scraper.setCookies() because that creates a new auth (loses guest token)
+  const cookieJar = auth.cookieJar();
+  await cookieJar.setCookie(
+    `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
+    'https://x.com'
+  );
+  logDebug(`auth_token injected: ${authTokenValue.slice(0, 8)}...`);
+
+  // Step 5: Verify
+  const finalCookies = await scraper.getCookies();
+  const ct0 = finalCookies.find((c: any) => c.key === 'ct0');
+  const authTk = finalCookies.find((c: any) => c.key === 'auth_token');
+  logDebug(`Final cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authTk ? 'YES' : 'NO'}`);
+
   return scraper;
 }
 
@@ -188,8 +220,8 @@ export async function downloadImage(imageUrl: string, destPath: string): Promise
 }
 
 /**
- * Check if Twitter credentials are configured for scraping.
+ * Check if Twitter auth_token is configured for scraping.
  */
 export function hasScraperSession(): boolean {
-  return !!config.twitter.username && !!config.twitter.password;
+  return config.twitterCookies.includes('auth_token=');
 }

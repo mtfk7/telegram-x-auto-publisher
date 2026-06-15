@@ -293,11 +293,12 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     watchedUser = addWatchedUser(username);
   }
 
-  // Check scraper session (credentials)
+  // Check scraper session (auth_token cookie)
   if (!hasScraperSession()) {
     await ctx.reply(
-      '⚠️ Kredensial Twitter belum diatur.\n\n' +
-      'Tambahkan `TWITTER_USERNAME` dan `TWITTER_PASSWORD` di `.env`',
+      '⚠️ Cookie Twitter belum diatur.\n\n' +
+      'Tambahkan `TWITTER_COOKIES=auth_token=VALUE` di `.env`\n\n' +
+      'Cara mendapat: F12 → Application → Cookies → x.com → copy `auth_token`',
       { parse_mode: 'Markdown', ...mainMenuKeyboard }
     );
   }
@@ -359,7 +360,7 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     const message = rawMsg.length > 300 ? rawMsg.slice(0, 300) + '...' : rawMsg;
     await ctx.reply(
       `❌ Gagal scraping @${username}.\n\n${message}\n\n` +
-      `Pastikan TWITTER_USERNAME dan TWITTER_PASSWORD sudah diatur di .env`,
+      `Pastikan TWITTER_COOKIES sudah diatur di .env`,
       { ...mainMenuKeyboard }
     );
   }
@@ -689,13 +690,13 @@ export async function handleScrapeAll(ctx: Context & BotContext): Promise<void> 
 // ── Scraper Menu ──
 
 export async function handleScraperMenu(ctx: Context & BotContext): Promise<void> {
-  const credsExist = hasScraperSession();
+  const hasSession = hasScraperSession();
 
   let statusText = '';
-  if (credsExist) {
-    statusText = '🟢 Twitter login sudah dikonfigurasi';
+  if (hasSession) {
+    statusText = '🟢 Cookie auth_token sudah diatur';
   } else {
-    statusText = '🔴 Twitter login belum dikonfigurasi';
+    statusText = '🔴 Cookie auth_token belum diatur';
   }
 
   const pendingCount = getPendingPostsCount();
@@ -714,22 +715,22 @@ export async function handleScraperMenu(ctx: Context & BotContext): Promise<void
 
 
 export async function handleCheckScraperSession(ctx: Context & BotContext): Promise<void> {
-  const credsExist = hasScraperSession();
+  const hasSession = hasScraperSession();
 
-  let text = '🔎 *Status Login Scraper*\n\n';
+  let text = '🔎 *Status Scraper*\n\n';
 
-  if (!credsExist) {
-    text += '🔴 *Kredensial Twitter belum diatur*\n\n';
+  if (!hasSession) {
+    text += '🔴 *Cookie auth_token belum diatur*\n\n';
     text += 'Tambahkan di `.env`:\n';
-    text += '`TWITTER_USERNAME=username_anda`\n';
-    text += '`TWITTER_PASSWORD=password_anda`\n';
-    text += '`TWITTER_EMAIL=email_anda` (opsional)\n\n';
-    text += 'Session cookies akan disimpan otomatis setelah login berhasil.';
+    text += '`TWITTER_COOKIES=auth_token=VALUE`\n\n';
+    text += 'Cara mendapat cookie:\n';
+    text += '1. Login ke x.com di browser\n';
+    text += '2. F12 → Application → Cookies → x.com\n';
+    text += '3. Copy nilai `auth_token`\n';
   } else {
-    text += '🟢 *Kredensial Twitter sudah dikonfigurasi*\n\n';
-    text += 'Login akan dilakukan otomatis saat scraping.\n';
-    text += 'Session cookies disimpan dan digunakan ulang.\n';
-    text += 'Jika scraping gagal, hapus `data/twitter-session.json` untuk login ulang.';
+    text += '🟢 *Cookie auth_token sudah diatur*\n\n';
+    text += 'Fresh ct0 akan diambil otomatis saat scraping.\n';
+    text += 'Jika scraping gagal, update auth_token dari browser.';
   }
 
   await ctx.reply(text, { parse_mode: 'Markdown', ...scraperMenuKeyboard });
