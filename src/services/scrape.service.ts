@@ -35,40 +35,41 @@ async function createScraper(): Promise<Scraper> {
       ));
     }
 
-    // Use library's internal tough-cookie for reliable cookie parsing
-    const toughCookiePath = require.resolve('tough-cookie', {
-      paths: [require.resolve('@the-convocation/twitter-scraper')],
-    });
-    const { Cookie } = require(toughCookiePath);
+    // Directly inject cookies into the library's internal auth cookie jar
+    // This bypasses setCookies() which creates a new auth and skips guest token activation
+    const auth = (scraper as any).auth;
+    if (!auth || !auth.cookieJar) {
+      logError('Cannot access library auth instance', new Error('scraper.auth not available'));
+    }
 
-    // Set ALL cookies (ct0 + auth_token) together in one call
-    // setCookies creates a new auth, so we must set everything at once
-    const cookiesToSet: any[] = [];
+    const cookieJar = auth.cookieJar();
+    const cookieUrl = 'https://x.com';
+
+    // Set ct0 cookie (CSRF token)
     if (ct0Pair) {
-      const ct0Cookie = Cookie.parse(`${ct0Pair}; Domain=x.com; Path=/`);
-      if (ct0Cookie) cookiesToSet.push(ct0Cookie);
+      const ct0Value = ct0Pair.split('=')[1];
+      await cookieJar.setCookie(
+        `ct0=${ct0Value}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
+        cookieUrl
+      );
+      logDebug(`ct0 injected: ${ct0Value.slice(0, 8)}...`);
     }
+
+    // Set auth_token cookie
     if (authPair) {
-      const authCookie = Cookie.parse(`${authPair}; Domain=x.com; Path=/`);
-      if (authCookie) cookiesToSet.push(authCookie);
+      const authTokenValue = authPair.split('=')[1];
+      await cookieJar.setCookie(
+        `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
+        cookieUrl
+      );
+      logDebug(`auth_token injected: ${authTokenValue.slice(0, 8)}...`);
     }
 
-    // Fix domain for cookie objects (library expects no leading dot)
-    for (const cookie of cookiesToSet) {
-      if (cookie.domain && cookie.domain.startsWith('.')) {
-        cookie.domain = cookie.domain.substring(1);
-        cookie.hostOnly = false;
-      }
-    }
-
-    logDebug(`Setting ${cookiesToSet.length} cookies: ${cookiesToSet.map((c: any) => c.key).join(', ')}`);
-    await scraper.setCookies(cookiesToSet);
-
-    // Verify cookies
+    // Verify cookies via getCookies
     const verifyCookies = await scraper.getCookies();
     const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
     const authToken = verifyCookies.find((c: any) => c.key === 'auth_token');
-    logDebug(`Cookie check - ct0: ${ct0 ? ct0.value.slice(0, 8) + '...' : 'NO'}, auth_token: ${authToken ? authToken.value.slice(0, 8) + '...' : 'NO'}`);
+    logDebug(`Cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authToken ? 'YES' : 'NO'}`);
     logDebug('Cookie Twitter diterapkan untuk scraping');
   } else {
     logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
