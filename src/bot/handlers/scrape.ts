@@ -355,11 +355,13 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     }
   } catch (error) {
     logError(`Gagal scraping @${username}`, error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const rawMsg = error instanceof Error ? error.message : 'Unknown error';
+    // Truncate long error messages to avoid Telegram Markdown parse errors
+    const message = rawMsg.length > 300 ? rawMsg.slice(0, 300) + '...' : rawMsg;
     await ctx.reply(
       `❌ Gagal scraping @${username}.\n\n${message}\n\n` +
       `Pastikan TWITTER_COOKIES sudah diatur di .env`,
-      { parse_mode: 'Markdown', ...mainMenuKeyboard }
+      { ...mainMenuKeyboard }
     );
   }
 }

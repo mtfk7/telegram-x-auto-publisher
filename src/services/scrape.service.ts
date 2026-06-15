@@ -20,11 +20,18 @@ async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
 
   if (config.twitterCookies) {
-    // Parse cookies from "key=value; key=value" format into full Set-Cookie strings
+    // Extract cookie pairs
     const cookiePairs = config.twitterCookies
       .split(';')
       .map((c) => c.trim())
       .filter(Boolean);
+
+    const authPair = cookiePairs.find((p) => p.toLowerCase().startsWith('auth_token='));
+    if (!authPair) {
+      logError('auth_token cookie not found in TWITTER_COOKIES', new Error(
+        `Available cookies: ${cookiePairs.map((c) => c.split('=')[0]).join(', ')}`
+      ));
+    }
 
     // Use library's internal tough-cookie for reliable cookie parsing
     const toughCookiePath = require.resolve('tough-cookie', {
@@ -32,28 +39,34 @@ async function createScraper(): Promise<Scraper> {
     });
     const { Cookie } = require(toughCookiePath);
 
-    const cookies = cookiePairs
-      .map((pair) => {
-        const parsed = Cookie.parse(`${pair}; Domain=x.com; Path=/`);
-        return parsed;
-      })
-      .filter(Boolean);
-
-    logDebug(`Parsed ${cookies.length} cookies: ${cookies.map((c: any) => c.key).join(', ')}`);
-
-    await scraper.setCookies(cookies);
-
-    // Verify cookies are set correctly
-    const verifyCookies = await scraper.getCookies();
-    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
-    logDebug(`CSRF cookie (ct0) in jar: ${ct0 ? 'YES' : 'NO'}`);
-
-    if (!ct0) {
-      logError('ct0 cookie not found in cookie jar after setCookies', new Error(
-        `Available cookies: ${verifyCookies.map((c: any) => c.key).join(', ')}`
-      ));
+    // Step 1: Make an unauthenticated request to get a FRESH ct0 from Twitter
+    logDebug('Mengambil ct0 baru dari Twitter...');
+    try {
+      await scraper.getProfile('twitter').catch(() => null);
+    } catch {
+      // Expected to fail, we just need the fresh ct0 cookie from the response
     }
 
+    // Step 2: Inject our auth_token (and optionally our ct0) into the cookie jar
+    const cookiesToSet: any[] = [];
+    if (authPair) {
+      const authCookie = Cookie.parse(`${authPair}; Domain=x.com; Path=/`);
+      if (authCookie) cookiesToSet.push(authCookie);
+    }
+
+    for (const cookie of cookiesToSet) {
+      if (cookie.domain && cookie.domain.startsWith('.')) {
+        cookie.domain = cookie.domain.substring(1);
+        cookie.hostOnly = false;
+      }
+    }
+    await scraper.setCookies(cookiesToSet);
+
+    // Verify cookies
+    const verifyCookies = await scraper.getCookies();
+    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
+    const authToken = verifyCookies.find((c: any) => c.key === 'auth_token');
+    logDebug(`Cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authToken ? 'YES' : 'NO'}`);
     logDebug('Cookie Twitter diterapkan untuk scraping');
   } else {
     logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
