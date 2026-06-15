@@ -556,8 +556,10 @@ export async function publishToAllAccounts(
   }
 
   const results: AccountPublishResult[] = [];
+  const [delayMin, delayMax] = config.postDelayMinutes;
 
-  for (const account of accounts) {
+  for (let i = 0; i < accounts.length; i++) {
+    const account = accounts[i];
     log(`── Posting ke akun: ${account.name} (${account.x_username ?? 'belum dikenal'}) ──`, 'INFO');
     try {
       const result = await publishPhotoWithCaption(photoPath, caption, account.profile_dir, account.twitter_cookies);
@@ -585,6 +587,14 @@ export async function publishToAllAccounts(
         error: errMsg,
       });
       log(`❌ Akun ${account.name}: GAGAL → ${errMsg}`, 'ERROR');
+    }
+
+    // Random delay between accounts (skip after last account)
+    if (i < accounts.length - 1) {
+      const delayMinutes = delayMin + Math.random() * (delayMax - delayMin);
+      const delayMs = Math.round(delayMinutes * 60 * 1000);
+      log(`Menunggu ${delayMinutes.toFixed(1)} menit sebelum posting ke akun berikutnya...`, 'INFO');
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 

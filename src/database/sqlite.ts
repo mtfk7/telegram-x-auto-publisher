@@ -109,6 +109,13 @@ function initDb(): DatabaseSync {
     // Column already exists, ignore
   }
 
+  // Migration: add scheduled_at to scraped_posts if missing
+  try {
+    db.exec(`ALTER TABLE scraped_posts ADD COLUMN scheduled_at TEXT`);
+  } catch {
+    // Column already exists, ignore
+  }
+
   return db;
 }
 
@@ -246,7 +253,7 @@ export interface WatchedUser {
   last_scraped_at: string | null;
 }
 
-export type ScrapedPostStatus = 'pending' | 'posted' | 'skipped';
+export type ScrapedPostStatus = 'pending' | 'posted' | 'skipped' | 'scheduled';
 
 export interface ScrapedPostRecord {
   id: number;
@@ -259,6 +266,7 @@ export interface ScrapedPostRecord {
   status: ScrapedPostStatus;
   posted_url: string | null;
   caption_id: number | null;
+  scheduled_at: string | null;
   created_at: string;
 }
 
@@ -340,7 +348,7 @@ export function getScrapedPostsByStatus(status: ScrapedPostStatus): ScrapedPostR
 
 export function updateScrapedPost(
   id: number,
-  data: Partial<Pick<ScrapedPostRecord, 'status' | 'posted_url' | 'caption' | 'caption_id'>>
+  data: Partial<Pick<ScrapedPostRecord, 'status' | 'posted_url' | 'caption' | 'caption_id' | 'scheduled_at'>>
 ): void {
   const fields: string[] = [];
   const values: SQLInputValue[] = [];
@@ -361,6 +369,10 @@ export function updateScrapedPost(
     fields.push('caption_id = ?');
     values.push(data.caption_id);
   }
+  if (data.scheduled_at !== undefined) {
+    fields.push('scheduled_at = ?');
+    values.push(data.scheduled_at);
+  }
 
   if (fields.length === 0) return;
 
@@ -373,6 +385,37 @@ export function getPendingPostsCount(): number {
     .prepare(`SELECT COUNT(*) as count FROM scraped_posts WHERE status = 'pending'`)
     .get() as { count: number };
   return row.count;
+}
+
+/**
+ * Get posts that are due for scheduled posting.
+ * Returns posts with scheduled_at in the past and status = 'pending'.
+ */
+export function getScheduledPosts(): ScrapedPostRecord[] {
+  return db
+    .prepare(
+      `SELECT * FROM scraped_posts
+       WHERE status = 'pending'
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at <= datetime('now')
+       ORDER BY scheduled_at ASC`
+    )
+    .all() as unknown as ScrapedPostRecord[];
+}
+
+/**
+ * Get posts that are scheduled for the future.
+ */
+export function getFutureScheduledPosts(): ScrapedPostRecord[] {
+  return db
+    .prepare(
+      `SELECT * FROM scraped_posts
+       WHERE status = 'pending'
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at > datetime('now')
+       ORDER BY scheduled_at ASC`
+    )
+    .all() as unknown as ScrapedPostRecord[];
 }
 
 // ── Caption Bank CRUD ──

@@ -42,6 +42,7 @@ import {
   handleScraperMenu,
   handleCheckScraperSession,
   handleManualCaptionInput,
+  handleScheduleInput,
 } from './handlers/scrape';
 import {
   handleCaptionMenu,
@@ -76,8 +77,8 @@ export function createBot(): Telegraf<AppContext> {
   bot.command('post', handlePostCommand);
   bot.command('captions', handleCaptionMenu);
 
-  // Inline button callbacks for scrape previews (post, swap, manual, posted, skip)
-  bot.action(/^(post|posted|skip|swap|manual):\d+$/, handleScrapePreviewCallback);
+  // Inline button callbacks for scrape previews (post, swap, manual, posted, skip, schedule)
+  bot.action(/^(post|posted|skip|swap|manual|schedule):\d+$/, handleScrapePreviewCallback);
 
   bot.hears('📝 Buat Post', handleCreatePostStart);
   bot.hears('📋 Riwayat Post', handleHistory);
@@ -123,6 +124,8 @@ export function createBot(): Telegraf<AppContext> {
     if (await handleCaptionRemoveInput(ctx)) return;
     // Manual caption input for scraped posts
     if (await handleManualCaptionInput(ctx)) return;
+    // Schedule input for scraped posts
+    if (await handleScheduleInput(ctx)) return;
     // Account flow handlers (must be last to not interfere)
     if (await handleAccountNameInput(ctx)) return;
     if (await handleRemoveAccountInput(ctx)) return;

@@ -41,6 +41,12 @@ export const config = {
   maxPhotoSizeMb: parseInt(process.env.MAX_PHOTO_SIZE_MB || '20', 10),
   maxReplyTextLength: parseInt(process.env.MAX_REPLY_TEXT_LENGTH || '280', 10),
   twitterCookies: process.env.TWITTER_COOKIES || '',
+  postDelayMinutes: (() => {
+    const raw = process.env.POST_DELAY_MINUTES || '5-10';
+    const parts = raw.split('-').map(Number);
+    return [parts[0] || 5, parts[1] || 10] as [number, number];
+  })(),
+  healthCheckHour: process.env.HEALTH_CHECK_HOUR || '07:00',
 };
 
 export function getAccountProfileDir(accountName: string): string {

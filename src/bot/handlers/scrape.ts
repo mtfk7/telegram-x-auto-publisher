@@ -44,7 +44,10 @@ function getSession(ctx: Context & BotContext) {
 
 function buildInlineKeyboard(postId: number) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('📤 Post Sekarang', `post:${postId}`)],
+    [
+      Markup.button.callback('📤 Post Sekarang', `post:${postId}`),
+      Markup.button.callback('📅 Jadwalkan', `schedule:${postId}`),
+    ],
     [
       Markup.button.callback('🔄 Ganti Caption', `swap:${postId}`),
       Markup.button.callback('✏️ Tulis Sendiri', `manual:${postId}`),
@@ -392,7 +395,7 @@ export async function handleScrapePreviewCallback(ctx: Context & BotContext): Pr
   if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
 
   const data = ctx.callbackQuery.data;
-  const match = data.match(/^(post|posted|skip|swap|manual):(\d+)$/);
+  const match = data.match(/^(post|posted|skip|swap|manual|schedule):(\d+)$/);
   if (!match) return;
 
   const action = match[1];
@@ -414,6 +417,8 @@ export async function handleScrapePreviewCallback(ctx: Context & BotContext): Pr
     await handleSwapCaption(ctx, post);
   } else if (action === 'manual') {
     await handleManualCaptionRequest(ctx, post);
+  } else if (action === 'schedule') {
+    await handleScheduleRequest(ctx, post);
   }
 }
 
@@ -646,6 +651,141 @@ export async function handleManualCaptionInput(ctx: Context & BotContext): Promi
   await ctx.reply(`✅ Caption diperbarui untuk post #${post.id}. Preview:`);
   await sendPostPreview(ctx, updatedPost);
   return true;
+}
+
+// ── Schedule Post action ──
+
+async function handleScheduleRequest(ctx: Context & BotContext, post: ScrapedPostRecord): Promise<void> {
+  const session = getSession(ctx);
+  session.state = 'waiting_schedule_input';
+  session.selectedPostId = post.id;
+
+  await ctx.answerCbQuery('📅 Masukkan jadwal posting');
+
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const formatDate = (d: Date) =>
+    `${d.getDate()}/${d.getMonth() + 1} ${d.getHours().toString().padStart(2, '0')}:00`;
+
+  await ctx.reply(
+    `📅 *Jadwalkan Post #${post.id}*\n\n` +
+    `Kirim waktu posting yang diinginkan.\n\n` +
+    `Format yang diterima:\n` +
+    `• \`16/6 08:00\` — tanggal/bulan jam:menit\n` +
+    `• \`besok 12:00\` — besok jam 12:00\n` +
+    `• \`2026-06-16 19:30\` — format ISO\n\n` +
+    `Sekarang: ${formatDate(now)}\n` +
+    `Besok: ${formatDate(tomorrow)}\n\n` +
+    `Ketik \`batal\` untuk membatalkan.`,
+    { parse_mode: 'Markdown' }
+  );
+}
+
+export async function handleScheduleInput(ctx: Context & BotContext): Promise<boolean> {
+  const session = getSession(ctx);
+  if (session.state !== 'waiting_schedule_input') return false;
+
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim() : '';
+  if (!text) return false;
+  if (text.toLowerCase() === 'batal') {
+    session.state = 'idle';
+    session.selectedPostId = undefined;
+    await ctx.reply('Dibatalkan.');
+    return true;
+  }
+
+  const postId = session.selectedPostId;
+  if (!postId) {
+    session.state = 'idle';
+    await ctx.reply('Sesi habis.');
+    return true;
+  }
+
+  const scheduledDate = parseScheduleInput(text);
+  if (!scheduledDate) {
+    await ctx.reply(
+      '❌ Format tidak dipahami. Coba: `16/6 08:00`, `besok 12:00`, atau `2026-06-16 19:30`',
+      { parse_mode: 'Markdown' }
+    );
+    return true;
+  }
+
+  // Check if in the past
+  if (scheduledDate <= new Date()) {
+    await ctx.reply('❌ Waktu yang dimasukkan sudah lewat. Masukkan waktu di masa depan.');
+    return true;
+  }
+
+  // Convert to UTC ISO string for SQLite storage
+  const isoString = scheduledDate.toISOString().replace('T', ' ').slice(0, 19);
+  updateScrapedPost(postId, { scheduled_at: isoString });
+
+  session.state = 'idle';
+  session.selectedPostId = undefined;
+
+  const displayTime = scheduledDate.toLocaleString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jakarta',
+  });
+
+  await ctx.reply(
+    `✅ Post #${postId} dijadwalkan pada *${displayTime} WIB*\n\n` +
+    `Bot akan otomatis memposting ke semua akun aktif pada waktu tersebut.`,
+    { parse_mode: 'Markdown' }
+  );
+
+  return true;
+}
+
+/**
+ * Parse various schedule input formats into a Date object (Asia/Jakarta timezone).
+ */
+function parseScheduleInput(text: string): Date | null {
+  const now = new Date();
+  const lower = text.toLowerCase().trim();
+
+  // "besok HH:MM" or "besok HH.MM"
+  if (lower.startsWith('besok')) {
+    const timeMatch = lower.match(/(\d{1,2})[:\.](\d{2})/);
+    if (!timeMatch) return null;
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(parseInt(timeMatch[1], 10), parseInt(timeMatch[2], 10), 0, 0);
+    return tomorrow;
+  }
+
+  // "DD/MM HH:MM" or "DD/MM/YYYY HH:MM"
+  const dmMatch = text.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2})[:\.](\d{2})$/);
+  if (dmMatch) {
+    const day = parseInt(dmMatch[1], 10);
+    const month = parseInt(dmMatch[2], 10) - 1; // JS months are 0-based
+    const year = dmMatch[3] ? parseInt(dmMatch[3], 10) : now.getFullYear();
+    const hour = parseInt(dmMatch[4], 10);
+    const minute = parseInt(dmMatch[5], 10);
+    const date = new Date(year, month, day, hour, minute, 0, 0);
+    if (isNaN(date.getTime())) return null;
+    return date;
+  }
+
+  // "YYYY-MM-DD HH:MM"
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2})[:\.](\d{2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    const hour = parseInt(isoMatch[4], 10);
+    const minute = parseInt(isoMatch[5], 10);
+    const date = new Date(year, month, day, hour, minute, 0, 0);
+    if (isNaN(date.getTime())) return null;
+    return date;
+  }
+
+  return null;
 }
 
 // ── Scrape All watched users ──

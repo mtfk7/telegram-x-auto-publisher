@@ -7,6 +7,7 @@ export type BotState =
   | 'waiting_account_remove'
   | 'waiting_account_cookie_select'
   | 'waiting_account_cookie_input'
+  | 'waiting_schedule_input'
   | 'waiting_scrape_username'
   | 'waiting_caption_text'
   | 'waiting_caption_remove'
@@ -18,6 +19,7 @@ export interface SessionData {
   replyText?: string;
   captionPostId?: number;
   selectedAccountName?: string;
+  selectedPostId?: number;
 }
 
 export interface BotContext {
