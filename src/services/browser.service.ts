@@ -490,15 +490,24 @@ export async function publishPhotoWithCaption(
 
   publishInProgress = true;
   logDebug(`Membuka browser (headless: ${config.browser.headless})`);
-  const context = await launchContext(config.browser.headless, profileDir, accountCookies || undefined);
-  const page = await getCleanPage(context);
+  let context: BrowserContext | null = null;
 
   try {
-    const loggedIn = await isLoggedIn(page);
+    context = await launchContext(config.browser.headless, profileDir, accountCookies || undefined);
+    const page = await getCleanPage(context);
+
+    // Login check with 60s timeout to prevent Telegraf's 90s timeout from hijacking
+    const loggedIn = await Promise.race([
+      isLoggedIn(page),
+      new Promise<boolean>((_, reject) =>
+        setTimeout(() => reject(new BrowserServiceError('Timeout saat mengecek login.', 'SESSION_EXPIRED')), 60000)
+      ),
+    ]);
+
     if (!loggedIn) {
       log('Gagal posting: Sesi X expired atau tidak valid', 'ERROR');
       throw new BrowserServiceError(
-        'Sesi X sudah expired. Login ulang.',
+        'Sesi X sudah expired. Update cookie akun.',
         'SESSION_EXPIRED'
       );
     }
@@ -521,7 +530,9 @@ export async function publishPhotoWithCaption(
     }
     throw error;
   } finally {
-    await context.close();
+    if (context) {
+      await context.close().catch(() => null);
+    }
     publishInProgress = false;
     logDebug('Browser ditutup');
   }
