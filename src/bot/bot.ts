@@ -91,7 +91,7 @@ export function createBot(): Telegraf<AppContext> {
 
   // Scraper management
   bot.hears('🔍 Scraper', handleScraperMenu);
-  bot.hears('🔎 Cek Cookie Scraper', handleCheckScraperSession);
+  bot.hears('🔎 Cek Login Scraper', handleCheckScraperSession);
   bot.hears('🔄 Scrape Semua Akun', handleScrapeAll);
 
   // Caption bank management

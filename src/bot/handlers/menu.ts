@@ -42,7 +42,7 @@ const HELP_TEXT =
   '3. Kirim caption (max 280 karakter)\n' +
   '4. Konfirmasi *YA* untuk publish ke semua akun\n\n' +
   '*Alur scrape & repost:*\n' +
-  '1. Set `TWITTER_COOKIES` di `.env` (F12 → Cookies → x.com)\n' +
+  '1. Set `TWITTER_USERNAME` dan `TWITTER_PASSWORD` di `.env`\n' +
   '2. /adduser @username — tambah akun sumber\n' +
   '3. 🏷 Bank Caption — tambahkan caption\n' +
   '4. /scrape @username — ambil postingan foto\n' +

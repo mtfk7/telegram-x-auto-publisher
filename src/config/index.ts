@@ -40,7 +40,13 @@ export const config = {
   },
   maxPhotoSizeMb: parseInt(process.env.MAX_PHOTO_SIZE_MB || '20', 10),
   maxReplyTextLength: parseInt(process.env.MAX_REPLY_TEXT_LENGTH || '280', 10),
+  twitter: {
+    username: process.env.TWITTER_USERNAME || '',
+    password: process.env.TWITTER_PASSWORD || '',
+    email: process.env.TWITTER_EMAIL || '',
+  },
   twitterCookies: process.env.TWITTER_COOKIES || '',
+  twitterSessionFile: path.join(dataDir, 'twitter-session.json'),
 };
 
 export function getAccountProfileDir(accountName: string): string {

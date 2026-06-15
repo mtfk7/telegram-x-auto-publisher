@@ -14,67 +14,80 @@ export interface ScrapedPost {
 let scrapeInProgress = false;
 
 /**
- * Create a Scraper instance with cookie-based authentication.
+ * Save cookies to a JSON file for session reuse.
+ */
+async function saveCookies(scraper: Scraper): Promise<void> {
+  try {
+    const cookies = await scraper.getCookies();
+    const serialized = cookies.map((c: any) => c.toJSON());
+    fs.writeFileSync(config.twitterSessionFile, JSON.stringify(serialized, null, 2));
+    logDebug(`Session cookies saved (${serialized.length} cookies)`);
+  } catch (err) {
+    logDebug(`Failed to save cookies: ${err}`);
+  }
+}
+
+/**
+ * Load cookies from a JSON file.
+ */
+function loadSavedCookies(): any[] | null {
+  try {
+    if (!fs.existsSync(config.twitterSessionFile)) return null;
+    const raw = fs.readFileSync(config.twitterSessionFile, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    logDebug(`Loaded ${parsed.length} cookies from session file`);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a Scraper instance with login-based authentication.
+ * Saves and reuses session cookies to avoid repeated logins.
  */
 async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
+  const { username, password, email } = config.twitter;
 
-  if (config.twitterCookies) {
-    // Extract cookie pairs
-    const cookiePairs = config.twitterCookies
-      .split(';')
-      .map((c) => c.trim())
-      .filter(Boolean);
-
-    const authPair = cookiePairs.find((p) => p.toLowerCase().startsWith('auth_token='));
-    const ct0Pair = cookiePairs.find((p) => p.toLowerCase().startsWith('ct0='));
-
-    if (!authPair) {
-      logError('auth_token cookie not found in TWITTER_COOKIES', new Error(
-        `Available cookies: ${cookiePairs.map((c) => c.split('=')[0]).join(', ')}`
-      ));
-    }
-
-    // Directly inject cookies into the library's internal auth cookie jar
-    // This bypasses setCookies() which creates a new auth and skips guest token activation
-    const auth = (scraper as any).auth;
-    if (!auth || !auth.cookieJar) {
-      logError('Cannot access library auth instance', new Error('scraper.auth not available'));
-    }
-
-    const cookieJar = auth.cookieJar();
-    const cookieUrl = 'https://x.com';
-
-    // Set ct0 cookie (CSRF token)
-    if (ct0Pair) {
-      const ct0Value = ct0Pair.split('=')[1];
-      await cookieJar.setCookie(
-        `ct0=${ct0Value}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
-        cookieUrl
-      );
-      logDebug(`ct0 injected: ${ct0Value.slice(0, 8)}...`);
-    }
-
-    // Set auth_token cookie
-    if (authPair) {
-      const authTokenValue = authPair.split('=')[1];
-      await cookieJar.setCookie(
-        `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
-        cookieUrl
-      );
-      logDebug(`auth_token injected: ${authTokenValue.slice(0, 8)}...`);
-    }
-
-    // Verify cookies via getCookies
-    const verifyCookies = await scraper.getCookies();
-    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
-    const authToken = verifyCookies.find((c: any) => c.key === 'auth_token');
-    logDebug(`Cookie check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authToken ? 'YES' : 'NO'}`);
-    logDebug('Cookie Twitter diterapkan untuk scraping');
-  } else {
-    logDebug('TWITTER_COOKIES tidak diatur, scraping tanpa autentikasi');
+  if (!username || !password) {
+    logDebug('TWITTER_USERNAME/PASSWORD tidak diatur, scraping tanpa autentikasi');
+    return scraper;
   }
 
+  // Step 1: Try loading saved session cookies
+  const savedCookies = loadSavedCookies();
+  if (savedCookies) {
+    try {
+      await scraper.setCookies(savedCookies);
+      const loggedIn = await scraper.isLoggedIn();
+      if (loggedIn) {
+        logDebug('Session cookies valid, skipping login');
+        return scraper;
+      }
+      logDebug('Saved session expired, re-logging in...');
+    } catch (err) {
+      logDebug(`Failed to load saved cookies: ${err}`);
+    }
+  }
+
+  // Step 2: Login with credentials
+  logDebug(`Logging in as @${username}...`);
+  try {
+    await scraper.login(username, password, email || undefined);
+  } catch (err) {
+    logError('Twitter login failed', err);
+    throw new Error(`Login Twitter gagal: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  const loggedIn = await scraper.isLoggedIn();
+  if (!loggedIn) {
+    throw new Error('Login Twitter berhasil tapi session tidak valid');
+  }
+
+  logDebug('Login berhasil!');
+  await saveCookies(scraper);
   return scraper;
 }
 
@@ -175,8 +188,8 @@ export async function downloadImage(imageUrl: string, destPath: string): Promise
 }
 
 /**
- * Check if Twitter cookies are configured for scraping.
+ * Check if Twitter credentials are configured for scraping.
  */
 export function hasScraperSession(): boolean {
-  return !!config.twitterCookies;
+  return !!config.twitter.username && !!config.twitter.password;
 }

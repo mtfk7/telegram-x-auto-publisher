@@ -31,7 +31,7 @@ export const accountMenuKeyboard = Markup.keyboard([
   .persistent();
 
 export const scraperMenuKeyboard = Markup.keyboard([
-  ['🔎 Cek Cookie Scraper'],
+  ['🔎 Cek Login Scraper'],
   ['🔄 Scrape Semua Akun'],
   ['⬅️ Kembali'],
 ])
