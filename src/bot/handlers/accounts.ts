@@ -306,3 +306,116 @@ export async function handleBackToMenu(ctx: Context & BotContext): Promise<void>
   session.state = 'idle';
   await ctx.reply('⬅️ Kembali ke menu utama.', mainMenuKeyboard);
 }
+
+// ── Set Account Cookies (cookie injection) ──
+
+export async function handleSetAccountCookies(ctx: Context & BotContext): Promise<void> {
+  const accounts = getAllAccounts();
+
+  if (accounts.length === 0) {
+    await ctx.reply(
+      '👥 Belum ada akun. Tambah akun dulu via menu Akun X.',
+      accountMenuKeyboard
+    );
+    return;
+  }
+
+  const session = getSession(ctx);
+  session.state = 'waiting_account_cookie_select';
+
+  let text = '🍪 *Set Cookie Akun*\n\n';
+  text += 'Pilih akun untuk set cookie (ketik namanya):\n\n';
+  for (const account of accounts) {
+    const icon = STATUS_ICON[account.status];
+    const hasCookies = account.twitter_cookies ? '✅' : '❌';
+    text += `${icon} ${account.name} (${account.x_username ?? 'belum login'}) - Cookie: ${hasCookies}\n`;
+  }
+
+  await ctx.reply(text, { parse_mode: 'Markdown', ...cancelKeyboard });
+}
+
+export async function handleAccountCookieSelect(ctx: Context & BotContext): Promise<boolean> {
+  const session = getSession(ctx);
+  if (session.state !== 'waiting_account_cookie_select') return false;
+
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim() : '';
+  if (!text) return false;
+  if (text === '❌ Batal') return false;
+
+  const account = getAccountByName(text);
+  if (!account) {
+    await ctx.reply(`❌ Akun "${text}" tidak ditemukan. Coba lagi atau ketik Batal.`);
+    return true;
+  }
+
+  session.state = 'waiting_account_cookie_input';
+  session.selectedAccountName = account.name;
+
+  await ctx.reply(
+    `🍪 *Set Cookie untuk ${account.name}*\n\n` +
+    `Kirim cookies X dalam format:\n` +
+    '`ct0=VALUE; auth_token=VALUE`\n\n' +
+    `Cara mendapat:\n` +
+    `1. Login ke x.com di browser\n` +
+    `2. F12 → Application → Cookies → x.com\n` +
+    `3. Copy nilai \`ct0\` dan \`auth_token\``,
+    { parse_mode: 'Markdown', ...cancelKeyboard }
+  );
+
+  return true;
+}
+
+export async function handleAccountCookieInput(ctx: Context & BotContext): Promise<boolean> {
+  const session = getSession(ctx);
+  if (session.state !== 'waiting_account_cookie_input') return false;
+
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim() : '';
+  if (!text) return false;
+  if (text === '❌ Batal') return false;
+
+  const accountName = session.selectedAccountName;
+  if (!accountName) {
+    session.state = 'idle';
+    await ctx.reply('❌ Sesi habis. Coba lagi.', accountMenuKeyboard);
+    return true;
+  }
+
+  // Validate cookies format
+  const hasCt0 = text.includes('ct0=');
+  const hasAuthToken = text.includes('auth_token=');
+  if (!hasCt0 || !hasAuthToken) {
+    await ctx.reply(
+      '❌ Format tidak valid. Harus mengandung `ct0=` dan `auth_token=`.\n' +
+      'Contoh: `ct0=abc123; auth_token=def456`',
+      { parse_mode: 'Markdown' }
+    );
+    return true;
+  }
+
+  const account = getAccountByName(accountName);
+  if (!account) {
+    session.state = 'idle';
+    await ctx.reply('❌ Akun tidak ditemukan.', accountMenuKeyboard);
+    return true;
+  }
+
+  // Save cookies and activate account
+  updateAccount(account.id, {
+    twitter_cookies: text,
+    status: 'active',
+  });
+
+  session.state = 'idle';
+  session.selectedAccountName = undefined;
+
+  log(`Cookie set untuk akun: ${account.name}`, 'INFO');
+
+  await ctx.reply(
+    `✅ Cookie berhasil disimpan untuk akun *${account.name}*!\n\n` +
+    `Akun sekarang aktif dan siap untuk posting.\n` +
+    `Cookie akan di-inject ke browser saat posting.`,
+    { parse_mode: 'Markdown', ...accountMenuKeyboard }
+  );
+
+  return true;
+}

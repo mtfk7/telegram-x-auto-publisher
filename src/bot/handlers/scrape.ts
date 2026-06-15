@@ -462,19 +462,35 @@ async function handlePostAction(ctx: Context & BotContext, post: ScrapedPostReco
       await ctx.deleteMessage(ctx.callbackQuery.message.message_id).catch(() => null);
     }
 
-    // Build result message
-    let msg = `✅ *Berhasil dipost!* (#${post.id})\n\n`;
+    // Build result message (escape markdown in user-generated content)
+    const escapeMd = (s: string) => s.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+    let msg = `✅ *Berhasil dipost\\!* \\(#${post.id}\\)\n\n`;
     for (const r of results) {
-      const label = r.xUsername ? `${r.accountName} (${r.xUsername})` : r.accountName;
+      const label = r.xUsername
+        ? `${escapeMd(r.accountName)} \\(${escapeMd(r.xUsername)}\\)`
+        : escapeMd(r.accountName);
       if (r.success) {
-        msg += `✅ *${label}*: [Tweet](${r.tweetUrl})\n`;
+        msg += `✅ *${label}*: ${escapeMd(r.tweetUrl || '')}\n`;
       } else {
-        msg += `❌ *${label}*: ${r.error}\n`;
+        msg += `❌ *${label}*: ${escapeMd(r.error || '')}\n`;
       }
     }
-    msg += `\n🔗 Sumber: ${post.source_url}`;
+    msg += `\n🔗 Sumber: ${escapeMd(post.source_url)}`;
 
-    await ctx.reply(msg, { parse_mode: 'Markdown' });
+    await ctx.reply(msg, { parse_mode: 'MarkdownV2' }).catch(async () => {
+      // Fallback to plain text if MarkdownV2 still fails
+      let fallback = `✅ Berhasil dipost! (#${post.id})\n\n`;
+      for (const r of results) {
+        const label = r.xUsername ? `${r.accountName} (${r.xUsername})` : r.accountName;
+        if (r.success) {
+          fallback += `✅ ${label}: ${r.tweetUrl}\n`;
+        } else {
+          fallback += `❌ ${label}: ${r.error}\n`;
+        }
+      }
+      fallback += `\n🔗 Sumber: ${post.source_url}`;
+      await ctx.reply(fallback);
+    });
 
     log(`Post scraped #${post.id} published: ${successResults.length}/${results.length} akun`, 'INFO');
   } catch (error) {

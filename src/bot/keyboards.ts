@@ -25,6 +25,7 @@ export const cancelKeyboard = Markup.keyboard([['❌ Batal']])
 export const accountMenuKeyboard = Markup.keyboard([
   ['➕ Tambah Akun'],
   ['📋 Daftar Akun', '🗑 Hapus Akun'],
+  ['🍪 Set Cookie Akun'],
   ['⬅️ Kembali'],
 ])
   .resize()

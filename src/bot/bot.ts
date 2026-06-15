@@ -27,6 +27,9 @@ import {
   handleRemoveAccountInput,
   handleBackToMenu,
   handleCheckAllCookies,
+  handleSetAccountCookies,
+  handleAccountCookieSelect,
+  handleAccountCookieInput,
 } from './handlers/accounts';
 import {
   handleAddUser,
@@ -88,6 +91,7 @@ export function createBot(): Telegraf<AppContext> {
   bot.hears('➕ Tambah Akun', handleAddAccount);
   bot.hears('📋 Daftar Akun', handleListAccounts);
   bot.hears('🗑 Hapus Akun', handleRemoveAccountStart);
+  bot.hears('🍪 Set Cookie Akun', handleSetAccountCookies);
 
   // Scraper management
   bot.hears('🔍 Scraper', handleScraperMenu);
@@ -122,6 +126,8 @@ export function createBot(): Telegraf<AppContext> {
     // Account flow handlers (must be last to not interfere)
     if (await handleAccountNameInput(ctx)) return;
     if (await handleRemoveAccountInput(ctx)) return;
+    if (await handleAccountCookieSelect(ctx)) return;
+    if (await handleAccountCookieInput(ctx)) return;
     // Scrape username input handler
     if (await handleScrapeUsernameInput(ctx)) return;
   });

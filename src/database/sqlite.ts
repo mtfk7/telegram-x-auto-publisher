@@ -24,6 +24,7 @@ export interface Account {
   name: string;
   x_username: string | null;
   profile_dir: string;
+  twitter_cookies: string | null;
   status: AccountStatus;
   created_at: string;
 }
@@ -54,10 +55,18 @@ function initDb(): DatabaseSync {
       name TEXT NOT NULL UNIQUE,
       x_username TEXT,
       profile_dir TEXT NOT NULL,
+      twitter_cookies TEXT,
       status TEXT NOT NULL DEFAULT 'inactive',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // Migration: add twitter_cookies column if missing (for existing DBs)
+  try {
+    db.exec(`ALTER TABLE accounts ADD COLUMN twitter_cookies TEXT`);
+  } catch {
+    // Column already exists, ignore
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS watched_users (
@@ -196,7 +205,7 @@ export function getActiveAccounts(): Account[] {
 
 export function updateAccount(
   id: number,
-  data: Partial<Pick<Account, 'status' | 'x_username'>>
+  data: Partial<Pick<Account, 'status' | 'x_username' | 'twitter_cookies'>>
 ): void {
   const fields: string[] = [];
   const values: SQLInputValue[] = [];
@@ -208,6 +217,10 @@ export function updateAccount(
   if (data.x_username !== undefined) {
     fields.push('x_username = ?');
     values.push(data.x_username);
+  }
+  if (data.twitter_cookies !== undefined) {
+    fields.push('twitter_cookies = ?');
+    values.push(data.twitter_cookies);
   }
 
   if (fields.length === 0) return;

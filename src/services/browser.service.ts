@@ -76,13 +76,13 @@ export function hasSession(profileDir: string): boolean {
   return fs.existsSync(profileDir);
 }
 
-async function launchContext(headless: boolean, profileDir: string): Promise<BrowserContext> {
+async function launchContext(headless: boolean, profileDir: string, cookies?: string): Promise<BrowserContext> {
   ensureDataDir();
   fs.mkdirSync(profileDir, { recursive: true });
 
   const launch = resolveBrowserLaunch(config.browser);
 
-  return chromium.launchPersistentContext(profileDir, {
+  const context = await chromium.launchPersistentContext(profileDir, {
     ...launch,
     headless,
     viewport: { width: 1366, height: 768 },
@@ -96,6 +96,36 @@ async function launchContext(headless: boolean, profileDir: string): Promise<Bro
     ],
     ignoreDefaultArgs: ['--enable-automation'],
   });
+
+  // Inject X.com cookies if provided
+  if (cookies) {
+    const parsedCookies = cookies
+      .split(';')
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .map((pair) => {
+        const [name, ...rest] = pair.split('=');
+        return { name: name.trim(), value: rest.join('=') };
+      })
+      .filter((c) => c.name && c.value);
+
+    if (parsedCookies.length > 0) {
+      const playwrightCookies = parsedCookies.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: '.x.com',
+        path: '/',
+        secure: true,
+        httpOnly: c.name === 'auth_token',
+        sameSite: 'Lax' as const,
+      }));
+
+      await context.addCookies(playwrightCookies);
+      logDebug(`Injected ${playwrightCookies.length} cookies into browser context`);
+    }
+  }
+
+  return context;
 }
 
 async function getCleanPage(context: BrowserContext): Promise<Page> {
@@ -436,14 +466,19 @@ async function postPhotoTweet(page: Page, photoPath: string, caption: string): P
 export async function publishPhotoWithCaption(
   photoPath: string,
   caption: string,
-  profileDir: string
+  profileDir: string,
+  accountCookies?: string | null
 ): Promise<PublishResult> {
   log(`Memulai proses posting: ${path.basename(photoPath)}`, 'INFO');
 
-  if (!hasSession(profileDir)) {
+  // Allow posting if profile exists OR if cookies are provided
+  const profileExists = hasSession(profileDir);
+  const hasCookies = !!accountCookies;
+
+  if (!profileExists && !hasCookies) {
     log('Gagal posting: Sesi X belum ada', 'ERROR');
     throw new BrowserServiceError(
-      'Sesi X belum ada. Login dulu.',
+      'Sesi X belum ada. Login dulu atau set cookie akun.',
       'NO_SESSION'
     );
   }
@@ -455,7 +490,7 @@ export async function publishPhotoWithCaption(
 
   publishInProgress = true;
   logDebug(`Membuka browser (headless: ${config.browser.headless})`);
-  const context = await launchContext(config.browser.headless, profileDir);
+  const context = await launchContext(config.browser.headless, profileDir, accountCookies || undefined);
   const page = await getCleanPage(context);
 
   try {
@@ -514,7 +549,7 @@ export async function publishToAllAccounts(
   for (const account of accounts) {
     log(`── Posting ke akun: ${account.name} (${account.x_username ?? 'belum dikenal'}) ──`, 'INFO');
     try {
-      const result = await publishPhotoWithCaption(photoPath, caption, account.profile_dir);
+      const result = await publishPhotoWithCaption(photoPath, caption, account.profile_dir, account.twitter_cookies);
       results.push({
         accountName: account.name,
         xUsername: account.x_username ?? undefined,
