@@ -14,196 +14,52 @@ export interface ScrapedPost {
 let scrapeInProgress = false;
 
 /**
- * Save cookies to a JSON file for session reuse.
- */
-async function saveCookies(scraper: Scraper): Promise<void> {
-  try {
-    const cookies = await scraper.getCookies();
-    const serialized = cookies.map((c: any) => c.toJSON());
-    fs.writeFileSync(config.twitterSessionFile, JSON.stringify(serialized, null, 2));
-    logDebug(`Session cookies saved (${serialized.length} cookies)`);
-  } catch (err) {
-    logDebug(`Failed to save cookies: ${err}`);
-  }
-}
-
-/**
- * Load cookies from a JSON file.
- */
-function loadSavedCookies(): any[] | null {
-  try {
-    if (!fs.existsSync(config.twitterSessionFile)) return null;
-    const raw = fs.readFileSync(config.twitterSessionFile, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    logDebug(`Loaded ${parsed.length} cookies from session file`);
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Create a Scraper instance with cookie-based authentication.
- *
- * Flow:
- * 1. Try loading saved session from file (fast path)
- * 2. If no session: fetch fresh ct0 via direct HTTP, inject ct0 + auth_token into cookie jar
+ * Hardcodes ct0 + auth_token from env, injected directly into the auth cookie jar.
  */
 async function createScraper(): Promise<Scraper> {
   const scraper = new Scraper();
-  const authToken = config.twitterCookies
+
+  // Parse cookies from TWITTER_COOKIES env (format: ct0=VALUE; auth_token=VALUE)
+  const cookiePairs = config.twitterCookies
     .split(';')
     .map((c) => c.trim())
-    .find((p) => p.toLowerCase().startsWith('auth_token='));
+    .filter(Boolean);
 
-  if (!authToken) {
-    logDebug('auth_token not found in TWITTER_COOKIES, scraping tanpa autentikasi');
+  const authPair = cookiePairs.find((p) => p.toLowerCase().startsWith('auth_token='));
+  const ct0Pair = cookiePairs.find((p) => p.toLowerCase().startsWith('ct0='));
+
+  if (!authPair || !ct0Pair) {
+    logDebug('TWITTER_COOKIES must contain both ct0 and auth_token');
     return scraper;
   }
 
-  const authTokenValue = authToken.split('=')[1];
+  const authValue = authPair.split('=')[1];
+  const ct0Value = ct0Pair.split('=')[1];
 
-  // Step 1: Try loading saved session cookies
-  const savedCookies = loadSavedCookies();
-  if (savedCookies) {
-    try {
-      await scraper.setCookies(savedCookies);
-      const loggedIn = await scraper.isLoggedIn();
-      if (loggedIn) {
-        logDebug('Session cookies valid, skipping login');
-        return scraper;
-      }
-      logDebug('Saved session expired, re-authenticating...');
-    } catch (err) {
-      logDebug(`Failed to load saved cookies: ${err}`);
-    }
-  }
-
-  // Step 2: Get fresh ct0 by simulating browser preflight (like visiting x.com login page)
-  logDebug('Fetching fresh ct0 via preflight request...');
+  // Inject directly into the auth's cookie jar (preserves guest token)
   const auth = (scraper as any).auth;
   if (!auth || !auth.cookieJar) {
     throw new Error('Cannot access library auth instance');
   }
 
-  // Trigger guest token activation (needed for API requests)
-  if (!auth.guestToken) {
-    try {
-      await auth.updateGuestToken();
-    } catch (err) {
-      logDebug(`Guest token update failed: ${err}`);
-    }
-  }
-  logDebug(`Guest token: ${auth.guestToken ? auth.guestToken.slice(0, 8) + '...' : 'NONE'}`);
+  const cookieJar = auth.cookieJar();
+  const cookieUrl = 'https://x.com';
 
-  try {
-    // Preflight: fetch the login page like a browser to get ct0 cookie
-    // This is exactly what the library's TwitterUserAuth.preflight() does
-    const preflightHeaders: Record<string, string> = {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-dest': 'document',
-      'sec-fetch-mode': 'navigate',
-      'sec-fetch-site': 'none',
-      'sec-fetch-user': '?1',
-      'upgrade-insecure-requests': '1',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-    };
+  await cookieJar.setCookie(
+    `ct0=${ct0Value}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
+    cookieUrl
+  );
+  await cookieJar.setCookie(
+    `auth_token=${authValue}; Domain=x.com; Path=/; Secure`,
+    cookieUrl
+  );
 
-    const res = await fetch('https://x.com/i/flow/login', {
-      redirect: 'follow',
-      headers: preflightHeaders,
-    });
-
-    logDebug(`Preflight status: ${res.status}`);
-
-    // Extract ct0 from response cookies
-    let freshCt0 = '';
-
-    // Method 1: getSetCookie()
-    if (typeof res.headers.getSetCookie === 'function') {
-      const setCookieHeaders = res.headers.getSetCookie();
-      logDebug(`Preflight set-cookie count: ${setCookieHeaders.length}`);
-      for (const cookieStr of setCookieHeaders) {
-        logDebug(`  Cookie: ${cookieStr.slice(0, 60)}...`);
-        const match = cookieStr.match(/^ct0=([^;]+)/);
-        if (match) {
-          freshCt0 = match[1];
-        }
-      }
-    }
-
-    // Method 2: scan all headers
-    if (!freshCt0) {
-      res.headers.forEach((value, key) => {
-        if (key.toLowerCase() === 'set-cookie' || value.includes('ct0=')) {
-          const match = value.match(/ct0=([^;]+)/);
-          if (match && !freshCt0) {
-            freshCt0 = match[1];
-          }
-        }
-      });
-    }
-
-    if (freshCt0) {
-      logDebug(`Fresh ct0 from preflight: ${freshCt0.slice(0, 12)}...`);
-    } else {
-      // Fallback: try library's own preflight method if available
-      logDebug('No ct0 from direct preflight, trying auth.preflight()...');
-      if (typeof auth.preflight === 'function') {
-        await auth.preflight();
-      }
-      // Also try library warmup
-      try {
-        await scraper.getProfile('twitter');
-      } catch {
-        // Expected to fail, but updateCookieJar stores response cookies
-      }
-    }
-
-    // Check jar for ct0 (from any of the above methods)
-    const jarCookies = await scraper.getCookies();
-    const jarCt0 = jarCookies.find((c: any) => c.key === 'ct0');
-    if (jarCt0) {
-      logDebug(`Found ct0 in jar: ${jarCt0.value.slice(0, 12)}...`);
-    }
-
-    const ct0ToUse = freshCt0 || jarCt0?.value || '';
-
-    if (ct0ToUse) {
-      logDebug(`Using ct0: ${ct0ToUse.slice(0, 12)}...`);
-
-      // Inject ct0 + auth_token into the auth's cookie jar
-      const cookieJar = auth.cookieJar();
-      const cookieUrl = 'https://x.com';
-
-      await cookieJar.setCookie(
-        `ct0=${ct0ToUse}; Domain=x.com; Path=/; Secure; SameSite=Lax`,
-        cookieUrl
-      );
-      await cookieJar.setCookie(
-        `auth_token=${authTokenValue}; Domain=x.com; Path=/; Secure`,
-        cookieUrl
-      );
-
-      logDebug(`Injected ct0 + auth_token into cookie jar`);
-    } else {
-      throw new Error('Failed to obtain ct0 from Twitter (tried preflight + library warmup)');
-    }
-
-    // Verify
-    const verifyCookies = await scraper.getCookies();
-    const ct0 = verifyCookies.find((c: any) => c.key === 'ct0');
-    const authTk = verifyCookies.find((c: any) => c.key === 'auth_token');
-    logDebug(`Final check - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authTk ? 'YES' : 'NO'}`);
-  } catch (err) {
-    logError('Failed to set up scraper auth', err);
-    throw new Error(`Gagal menyiapkan scraper: ${err instanceof Error ? err.message : 'Unknown error'}`);
-  }
+  // Verify
+  const cookies = await scraper.getCookies();
+  const ct0 = cookies.find((c: any) => c.key === 'ct0');
+  const authTk = cookies.find((c: any) => c.key === 'auth_token');
+  logDebug(`Cookie injected - ct0: ${ct0 ? 'YES' : 'NO'}, auth_token: ${authTk ? 'YES' : 'NO'}`);
 
   return scraper;
 }
@@ -305,8 +161,8 @@ export async function downloadImage(imageUrl: string, destPath: string): Promise
 }
 
 /**
- * Check if Twitter auth_token is configured for scraping.
+ * Check if Twitter cookies are configured for scraping.
  */
 export function hasScraperSession(): boolean {
-  return config.twitterCookies.includes('auth_token=');
+  return config.twitterCookies.includes('auth_token=') && config.twitterCookies.includes('ct0=');
 }

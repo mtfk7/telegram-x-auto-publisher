@@ -293,12 +293,12 @@ export async function handleScrape(ctx: Context & BotContext): Promise<void> {
     watchedUser = addWatchedUser(username);
   }
 
-  // Check scraper session (auth_token cookie)
+  // Check scraper session (ct0 + auth_token cookies)
   if (!hasScraperSession()) {
     await ctx.reply(
       '⚠️ Cookie Twitter belum diatur.\n\n' +
-      'Tambahkan `TWITTER_COOKIES=auth_token=VALUE` di `.env`\n\n' +
-      'Cara mendapat: F12 → Application → Cookies → x.com → copy `auth_token`',
+      'Tambahkan `TWITTER_COOKIES=ct0=...; auth_token=...` di `.env`\n\n' +
+      'Cara mendapat: F12 → Application → Cookies → x.com',
       { parse_mode: 'Markdown', ...mainMenuKeyboard }
     );
   }
@@ -694,9 +694,9 @@ export async function handleScraperMenu(ctx: Context & BotContext): Promise<void
 
   let statusText = '';
   if (hasSession) {
-    statusText = '🟢 Cookie auth_token sudah diatur';
+    statusText = '🟢 Cookie Twitter sudah diatur';
   } else {
-    statusText = '🔴 Cookie auth_token belum diatur';
+    statusText = '🔴 Cookie Twitter belum diatur';
   }
 
   const pendingCount = getPendingPostsCount();
@@ -720,17 +720,16 @@ export async function handleCheckScraperSession(ctx: Context & BotContext): Prom
   let text = '🔎 *Status Scraper*\n\n';
 
   if (!hasSession) {
-    text += '🔴 *Cookie auth_token belum diatur*\n\n';
+    text += '🔴 *Cookie Twitter belum diatur*\n\n';
     text += 'Tambahkan di `.env`:\n';
-    text += '`TWITTER_COOKIES=auth_token=VALUE`\n\n';
+    text += '`TWITTER_COOKIES=ct0=VALUE; auth_token=VALUE`\n\n';
     text += 'Cara mendapat cookie:\n';
     text += '1. Login ke x.com di browser\n';
     text += '2. F12 → Application → Cookies → x.com\n';
-    text += '3. Copy nilai `auth_token`\n';
+    text += '3. Copy nilai `ct0` dan `auth_token`\n';
   } else {
-    text += '🟢 *Cookie auth_token sudah diatur*\n\n';
-    text += 'Fresh ct0 akan diambil otomatis saat scraping.\n';
-    text += 'Jika scraping gagal, update auth_token dari browser.';
+    text += '🟢 *Cookie Twitter sudah diatur*\n\n';
+    text += 'Jika scraping gagal, update ct0 dan auth_token dari browser.';
   }
 
   await ctx.reply(text, { parse_mode: 'Markdown', ...scraperMenuKeyboard });
